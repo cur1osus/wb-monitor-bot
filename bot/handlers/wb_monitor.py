@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from aiogram import Router, F
 from aiogram.exceptions import TelegramBadRequest
+from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
@@ -93,16 +94,12 @@ async def wb_add_cb(cb: CallbackQuery) -> None:
     )
 
 
-@router.message(F.text.regexp(r"https?://.*wildberries.*|\d{6,12}"))
+@router.message(StateFilter(None), F.text.regexp(r"https?://.*wildberries.*|\d{6,12}"))
 async def wb_add_item_from_text(
     msg: Message,
     session: AsyncSession,
     redis: "Redis",
-    state: FSMContext,
 ) -> None:
-    if await state.get_state() is not None:
-        return
-
     url_or_text = msg.text.strip()
     wb_item_id = extract_wb_item_id(url_or_text)
 
