@@ -1,0 +1,18 @@
+[project]
+name = "wb-monitor-bot"
+version = "0.1.0"
+requires-python = ">=3.11,<3.15"
+dependencies = [
+    "bot",
+    "migrations",
+]
+
+[tool.uv.sources]
+bot = { workspace = true }
+migrations = { workspace = true }
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["bot", "migrations"]

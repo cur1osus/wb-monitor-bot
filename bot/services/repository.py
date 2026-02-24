@@ -1,0 +1,269 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+from secrets import token_urlsafe
+from typing import TYPE_CHECKING
+
+from sqlalchemy import exists, func, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from bot.db.models import AlertLogModel, MonitorUserModel, ReferralRewardModel, SnapshotModel, TrackModel
+from bot.db.redis import MonitorUserRD
+
+if TYPE_CHECKING:
+    from redis.asyncio import Redis
+
+
+def _new_ref_code() -> str:
+    return token_urlsafe(6).replace("-", "").replace("_", "").upper()[:10]
+
+
+async def _ensure_referral_code(session: AsyncSession, user: MonitorUserModel) -> None:
+    if user.referral_code:
+        return
+    while True:
+        code = _new_ref_code()
+        occupied = await session.scalar(select(exists().where(MonitorUserModel.referral_code == code)))
+        if not occupied:
+            user.referral_code = code
+            return
+
+
+async def get_or_create_monitor_user(
+    session: AsyncSession,
+    tg_user_id: int,
+    username: str | None,
+    redis: "Redis | None" = None,
+) -> MonitorUserModel:
+    """Получить или создать пользователя. При изменении — инвалидирует Redis-кэш."""
+    user = await session.scalar(select(MonitorUserModel).where(MonitorUserModel.tg_user_id == tg_user_id))
+    if user:
+        user.username = username
+        await _ensure_referral_code(session, user)
+        return user
+
+    user = MonitorUserModel(tg_user_id=tg_user_id, username=username)
+    session.add(user)
+    await session.flush()
+    await _ensure_referral_code(session, user)
+
+    # Инвалидируем кэш при создании (на случай если был промах)
+    if redis:
+        await MonitorUserRD.invalidate(redis, tg_user_id)
+
+    return user
+
+
+async def bind_user_referrer_by_code(
+    session: AsyncSession,
+    user: MonitorUserModel,
+    referral_code: str,
+    redis: "Redis | None" = None,
+) -> bool:
+    if user.referred_by_tg_user_id:
+        return False
+
+    code = referral_code.strip().upper()
+    if not code:
+        return False
+
+    referrer = await session.scalar(select(MonitorUserModel).where(MonitorUserModel.referral_code == code))
+    if not referrer or referrer.tg_user_id == user.tg_user_id:
+        return False
+
+    user.referred_by_tg_user_id = referrer.tg_user_id
+
+    if redis:
+        await MonitorUserRD.invalidate(redis, user.tg_user_id)
+
+    return True
+
+
+async def get_monitor_user_by_tg_id(session: AsyncSession, tg_user_id: int) -> MonitorUserModel | None:
+    return await session.scalar(select(MonitorUserModel).where(MonitorUserModel.tg_user_id == tg_user_id))
+
+
+async def add_referral_reward_once(
+    session: AsyncSession,
+    *,
+    referrer_user_id: int,
+    invited_user_id: int,
+    invited_tg_user_id: int,
+    payment_charge_id: str,
+    rewarded_days: int = 7,
+) -> bool:
+    exists_row = await session.scalar(
+        select(ReferralRewardModel.id).where(ReferralRewardModel.payment_charge_id == payment_charge_id)
+    )
+    if exists_row:
+        return False
+
+    session.add(
+        ReferralRewardModel(
+            referrer_user_id=referrer_user_id,
+            invited_user_id=invited_user_id,
+            invited_tg_user_id=invited_tg_user_id,
+            payment_charge_id=payment_charge_id,
+            rewarded_days=rewarded_days,
+        )
+    )
+    return True
+
+
+async def count_user_tracks(session: AsyncSession, user_id: int, active_only: bool = True) -> int:
+    query = select(func.count(TrackModel.id)).where(
+        TrackModel.user_id == user_id,
+        TrackModel.is_deleted.is_(False),
+    )
+    if active_only:
+        query = query.where(TrackModel.is_active.is_(True))
+    count = await session.scalar(query)
+    return int(count or 0)
+
+
+async def expire_pro_users(
+    session: AsyncSession,
+    now: datetime,
+    redis: "Redis | None" = None,
+) -> int:
+    stmt_ids = select(MonitorUserModel.id, MonitorUserModel.tg_user_id).where(
+        MonitorUserModel.plan == "pro",
+        MonitorUserModel.pro_expires_at.is_not(None),
+        MonitorUserModel.pro_expires_at < now,
+    )
+    rows = (await session.execute(stmt_ids)).all()
+
+    if not rows:
+        return 0
+
+    user_ids = [r[0] for r in rows]
+    tg_ids = [r[1] for r in rows]
+
+    await session.execute(
+        update(MonitorUserModel)
+        .where(MonitorUserModel.id.in_(user_ids))
+        .values(plan="free", pro_expires_at=None),
+    )
+
+    from bot.services.config import FREE_INTERVAL
+    await session.execute(
+        update(TrackModel)
+        .where(TrackModel.user_id.in_(user_ids))
+        .values(check_interval_min=FREE_INTERVAL),
+    )
+
+    # Инвалидация Redis-кэша для всех сменивших план
+    if redis:
+        for tg_id in tg_ids:
+            await MonitorUserRD.invalidate(redis, tg_id)
+
+    return len(user_ids)
+
+
+async def set_user_tracks_interval(session: AsyncSession, user_id: int, interval_min: int) -> int:
+    result = await session.execute(
+        update(TrackModel)
+        .where(TrackModel.user_id == user_id)
+        .values(check_interval_min=interval_min)
+    )
+    return int(result.rowcount or 0)
+
+
+async def create_track(
+    session: AsyncSession,
+    user_id: int,
+    wb_item_id: int,
+    url: str,
+    title: str,
+    price: Decimal | None,
+    in_stock: bool,
+    qty: int | None,
+    sizes: list[str],
+    check_interval_min: int,
+) -> TrackModel:
+    track = TrackModel(
+        user_id=user_id,
+        wb_item_id=wb_item_id,
+        url=url,
+        title=title,
+        check_interval_min=check_interval_min,
+        watch_qty=False,
+        last_price=price,
+        last_in_stock=in_stock,
+        last_qty=qty,
+        last_sizes=sizes,
+        last_checked_at=datetime.now(UTC).replace(tzinfo=None),
+    )
+    session.add(track)
+    await session.flush()
+
+    session.add(
+        SnapshotModel(
+            track_id=track.id,
+            price_current=price,
+            in_stock=in_stock,
+            qty_current=qty,
+            sizes=sizes,
+        )
+    )
+    return track
+
+
+async def get_user_tracks(session: AsyncSession, user_id: int) -> list[TrackModel]:
+    rows = await session.scalars(
+        select(TrackModel)
+        .where(TrackModel.user_id == user_id, TrackModel.is_deleted.is_(False))
+        .order_by(TrackModel.created_at.desc())
+    )
+    return list(rows)
+
+
+async def toggle_track_active(session: AsyncSession, track_id: int, is_active: bool) -> None:
+    await session.execute(
+        update(TrackModel).where(TrackModel.id == track_id).values(is_active=is_active)
+    )
+
+
+async def delete_track(session: AsyncSession, track_id: int) -> None:
+    await session.execute(
+        update(TrackModel)
+        .where(TrackModel.id == track_id)
+        .values(is_deleted=True, is_active=False)
+    )
+
+
+async def get_user_track_by_id(session: AsyncSession, track_id: int) -> TrackModel | None:
+    return await session.scalar(
+        select(TrackModel).where(TrackModel.id == track_id, TrackModel.is_deleted.is_(False))
+    )
+
+
+async def due_tracks_python_safe(session: AsyncSession, now: datetime) -> list[TrackModel]:
+    rows = await session.scalars(
+        select(TrackModel)
+        .options(selectinload(TrackModel.user))
+        .where(TrackModel.is_active.is_(True), TrackModel.is_deleted.is_(False))
+    )
+    out: list[TrackModel] = []
+    for t in list(rows):
+        if t.last_checked_at is None or t.last_checked_at <= now - timedelta(minutes=t.check_interval_min):
+            out.append(t)
+    return out
+
+
+async def is_duplicate_event(session: AsyncSession, track_id: int, event_hash: str, within_hours: int = 24) -> bool:
+    since = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=within_hours)
+    existing = await session.scalar(
+        select(AlertLogModel.id).where(
+            AlertLogModel.track_id == track_id,
+            AlertLogModel.event_hash == event_hash,
+            AlertLogModel.sent_at >= since,
+        )
+    )
+    return existing is not None
+
+
+async def log_event(session: AsyncSession, track_id: int, event_type: str, event_hash: str) -> None:
+    session.add(AlertLogModel(track_id=track_id, event_type=event_type, event_hash=event_hash))
