@@ -254,6 +254,5 @@ def admin_grant_pro_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [_btn("◀️ Назад", "wbm:admin:0")],
-            [_btn("❌ Отмена", "wbm:cancel:0", style="danger")],
         ]
     )

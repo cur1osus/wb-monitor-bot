@@ -95,8 +95,14 @@ async def wb_add_cb(cb: CallbackQuery) -> None:
 
 @router.message(F.text.regexp(r"https?://.*wildberries.*|\d{6,12}"))
 async def wb_add_item_from_text(
-    msg: Message, session: AsyncSession, redis: "Redis"
+    msg: Message,
+    session: AsyncSession,
+    redis: "Redis",
+    state: FSMContext,
 ) -> None:
+    if await state.get_state() is not None:
+        return
+
     url_or_text = msg.text.strip()
     wb_item_id = extract_wb_item_id(url_or_text)
 
@@ -491,10 +497,14 @@ async def wb_help_cb(cb: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data == "wbm:admin:0")
-async def wb_admin_cb(cb: CallbackQuery, session: AsyncSession) -> None:
+async def wb_admin_cb(
+    cb: CallbackQuery, session: AsyncSession, state: FSMContext
+) -> None:
     if not is_admin(cb.from_user.id, se):
         await cb.answer("❌ Нет доступа", show_alert=True)
         return
+
+    await state.clear()
 
     stats = await get_admin_stats(session, days=7)
     await cb.message.edit_text(
@@ -516,10 +526,14 @@ def _admin_stats_text(stats: "AdminStats") -> str:
 
 
 @router.callback_query(F.data.regexp(r"wbm:admin:stats:(\d+)"))
-async def wb_admin_stats_cb(cb: CallbackQuery, session: AsyncSession) -> None:
+async def wb_admin_stats_cb(
+    cb: CallbackQuery, session: AsyncSession, state: FSMContext
+) -> None:
     if not is_admin(cb.from_user.id, se):
         await cb.answer("❌ Нет доступа", show_alert=True)
         return
+
+    await state.clear()
 
     days = int(cb.data.split(":")[3])
     if days not in {7, 14, 30}:
