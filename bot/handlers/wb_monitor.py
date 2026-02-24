@@ -6,6 +6,9 @@ from html import escape
 from typing import TYPE_CHECKING
 
 from aiogram import Router, F
+from aiogram.exceptions import TelegramBadRequest
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
@@ -24,6 +27,8 @@ from bot.keyboards.inline import (
     dashboard_kb,
     dashboard_text,
     format_track_text,
+    admin_grant_pro_kb,
+    admin_panel_kb,
     plan_kb,
     paged_track_kb,
     ref_kb,
@@ -39,6 +44,7 @@ from bot.services.repository import (
     delete_track,
     add_referral_reward_once,
     get_monitor_user_by_tg_id,
+    get_admin_stats,
     set_user_tracks_interval,
 )
 from bot.services.utils import is_admin
@@ -54,8 +60,17 @@ if TYPE_CHECKING:
     from redis.asyncio import Redis
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from bot.services.repository import AdminStats
+
 router = Router()
 logger = logging.getLogger(__name__)
+
+
+class SettingsState(StatesGroup):
+    waiting_for_price = State()
+    waiting_for_drop = State()
+    waiting_for_sizes = State()
+    waiting_for_pro_grant = State()
 
 
 @router.callback_query(F.data == "wbm:home:0")
@@ -475,22 +490,145 @@ async def wb_help_cb(cb: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data == "wbm:admin:0")
-async def wb_admin_cb(cb: CallbackQuery) -> None:
+async def wb_admin_cb(cb: CallbackQuery, session: AsyncSession) -> None:
     if not is_admin(cb.from_user.id, se):
         await cb.answer("❌ Нет доступа", show_alert=True)
         return
+
+    stats = await get_admin_stats(session, days=7)
     await cb.message.edit_text(
-        "🛠 <b>Админ панель</b>\n\nВыберите действие:",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="◀ Назад", callback_data="wbm:home:0")],
-            ]
-        ),
+        _admin_stats_text(stats),
+        reply_markup=admin_panel_kb(selected_days=7),
     )
 
 
+def _admin_stats_text(stats: "AdminStats") -> str:
+    return (
+        f"🛠 <b>Админ панель</b>\n"
+        f"Период: <b>{stats.days} дней</b>\n\n"
+        f"👥 Пользователи: <b>{stats.total_users}</b> (новых: +{stats.new_users})\n"
+        f"⭐ PRO активных: <b>{stats.pro_users}</b>\n"
+        f"📦 Треки: <b>{stats.total_tracks}</b> (активных: {stats.active_tracks}, новых: +{stats.new_tracks})\n"
+        f"🔁 Проверок (snapshots): <b>{stats.checks_count}</b>\n"
+        f"🔔 Уведомлений: <b>{stats.alerts_count}</b>"
+    )
+
+
+@router.callback_query(F.data.regexp(r"wbm:admin:stats:(\d+)"))
+async def wb_admin_stats_cb(cb: CallbackQuery, session: AsyncSession) -> None:
+    if not is_admin(cb.from_user.id, se):
+        await cb.answer("❌ Нет доступа", show_alert=True)
+        return
+
+    days = int(cb.data.split(":")[3])
+    if days not in {7, 14, 30}:
+        await cb.answer("Недоступный период", show_alert=True)
+        return
+
+    stats = await get_admin_stats(session, days=days)
+    await cb.message.edit_text(
+        _admin_stats_text(stats),
+        reply_markup=admin_panel_kb(selected_days=days),
+    )
+
+
+@router.callback_query(F.data == "wbm:admin:grantpro")
+async def wb_admin_grant_pro_cb(cb: CallbackQuery, state: FSMContext) -> None:
+    if not is_admin(cb.from_user.id, se):
+        await cb.answer("❌ Нет доступа", show_alert=True)
+        return
+
+    await state.set_state(SettingsState.waiting_for_pro_grant)
+    await cb.message.edit_text(
+        "🎁 <b>Выдать PRO</b>\n\n"
+        "Отправьте данные в формате:\n"
+        "<code>tg_id дни</code>\n\n"
+        "Пример:\n"
+        "<code>123456789 30</code>",
+        reply_markup=admin_grant_pro_kb(),
+    )
+
+
+def _parse_grant_pro_payload(text: str) -> tuple[int, int] | None:
+    parts = text.replace(",", " ").split()
+    if len(parts) != 2:
+        return None
+    try:
+        tg_user_id = int(parts[0])
+        days = int(parts[1])
+    except ValueError:
+        return None
+    if tg_user_id <= 0 or not (1 <= days <= 365):
+        return None
+    return tg_user_id, days
+
+
+@router.message(SettingsState.waiting_for_pro_grant, F.text)
+async def wb_admin_grant_pro_msg(
+    msg: Message,
+    state: FSMContext,
+    session: AsyncSession,
+    redis: "Redis",
+) -> None:
+    if not msg.from_user:
+        await state.clear()
+        return
+
+    if not is_admin(msg.from_user.id, se):
+        await state.clear()
+        return
+
+    parsed = _parse_grant_pro_payload(msg.text.strip())
+    if parsed is None:
+        await msg.answer(
+            "❌ Неверный формат. Используйте: <code>tg_id дни</code> (дни от 1 до 365).",
+            reply_markup=admin_grant_pro_kb(),
+        )
+        return
+
+    tg_user_id, days = parsed
+    user = await get_monitor_user_by_tg_id(session, tg_user_id)
+    if not user:
+        await msg.answer(
+            "❌ Пользователь не найден. Он должен хотя бы один раз запустить бота (/start).",
+            reply_markup=admin_grant_pro_kb(),
+        )
+        return
+
+    now = datetime.now(UTC).replace(tzinfo=None)
+    base_expiry = (
+        user.pro_expires_at
+        if user.pro_expires_at and user.pro_expires_at > now
+        else now
+    )
+    user.plan = "pro"
+    user.pro_expires_at = base_expiry + timedelta(days=days)
+    await set_user_tracks_interval(session, user.id, PRO_INTERVAL)
+    await session.commit()
+    await MonitorUserRD.invalidate(redis, user.tg_user_id)
+
+    await state.clear()
+    await msg.answer(
+        f"✅ Пользователю <code>{user.tg_user_id}</code> выдан PRO на <b>{days}</b> дн.\n"
+        f"Действует до: <b>{user.pro_expires_at.strftime('%d.%m.%Y %H:%M')}</b>",
+        reply_markup=admin_panel_kb(selected_days=7),
+    )
+
+    try:
+        await msg.bot.send_message(
+            user.tg_user_id,
+            f"🎉 Вам активирован PRO на <b>{days}</b> дн.\n"
+            f"Действует до: <b>{user.pro_expires_at.strftime('%d.%m.%Y %H:%M')}</b>",
+        )
+    except Exception:
+        pass
+
+
 @router.callback_query(F.data == "wbm:cancel:0")
-async def wb_cancel_cb(cb: CallbackQuery, session: AsyncSession) -> None:
+async def wb_cancel_cb(
+    cb: CallbackQuery, session: AsyncSession, state: FSMContext
+) -> None:
+    await state.clear()
     user = await get_or_create_monitor_user(
         session, cb.from_user.id, cb.from_user.username
     )
@@ -518,15 +656,6 @@ async def wb_back_cb(cb: CallbackQuery, session: AsyncSession) -> None:
 
 
 # ─── Settings Handlers ───────────────────────────────────────────────────────
-
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
-
-
-class SettingsState(StatesGroup):
-    waiting_for_price = State()
-    waiting_for_drop = State()
-    waiting_for_sizes = State()
 
 
 @router.callback_query(F.data.regexp(r"wbm:price:(\d+)"))
@@ -626,9 +755,6 @@ async def wb_settings_drop_msg(
         )
 
     await state.clear()
-
-
-from aiogram.exceptions import TelegramBadRequest
 
 
 @router.callback_query(F.data.regexp(r"wbm:qty:(\d+)"))

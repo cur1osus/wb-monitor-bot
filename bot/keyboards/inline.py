@@ -228,3 +228,32 @@ def ref_kb(ref_link: str) -> InlineKeyboardMarkup:
             [_btn("◀️ В меню", "wbm:home:0")],
         ]
     )
+
+
+# ─── Admin ───────────────────────────────────────────────────────────────────
+
+
+def admin_panel_kb(selected_days: int | None = None) -> InlineKeyboardMarkup:
+    def _label(days: int) -> str:
+        return f"✅ {days} дн" if selected_days == days else f"📊 {days} дн"
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                _btn(_label(7), "wbm:admin:stats:7"),
+                _btn(_label(14), "wbm:admin:stats:14"),
+                _btn(_label(30), "wbm:admin:stats:30"),
+            ],
+            [_btn("🎁 Выдать PRO", "wbm:admin:grantpro", style="success")],
+            [_btn("◀️ В меню", "wbm:home:0")],
+        ]
+    )
+
+
+def admin_grant_pro_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [_btn("◀️ Назад", "wbm:admin:0")],
+            [_btn("❌ Отмена", "wbm:cancel:0", style="danger")],
+        ]
+    )

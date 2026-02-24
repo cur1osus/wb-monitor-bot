@@ -1,19 +1,39 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from secrets import token_urlsafe
 from typing import TYPE_CHECKING
 
-from sqlalchemy import exists, func, select, update
+from sqlalchemy import exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from bot.db.models import AlertLogModel, MonitorUserModel, ReferralRewardModel, SnapshotModel, TrackModel
+from bot.db.models import (
+    AlertLogModel,
+    MonitorUserModel,
+    ReferralRewardModel,
+    SnapshotModel,
+    TrackModel,
+)
 from bot.db.redis import MonitorUserRD
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
+
+
+@dataclass(slots=True)
+class AdminStats:
+    days: int
+    total_users: int
+    new_users: int
+    pro_users: int
+    total_tracks: int
+    active_tracks: int
+    new_tracks: int
+    checks_count: int
+    alerts_count: int
 
 
 def _new_ref_code() -> str:
@@ -25,7 +45,9 @@ async def _ensure_referral_code(session: AsyncSession, user: MonitorUserModel) -
         return
     while True:
         code = _new_ref_code()
-        occupied = await session.scalar(select(exists().where(MonitorUserModel.referral_code == code)))
+        occupied = await session.scalar(
+            select(exists().where(MonitorUserModel.referral_code == code))
+        )
         if not occupied:
             user.referral_code = code
             return
@@ -38,7 +60,9 @@ async def get_or_create_monitor_user(
     redis: "Redis | None" = None,
 ) -> MonitorUserModel:
     """Получить или создать пользователя. При изменении — инвалидирует Redis-кэш."""
-    user = await session.scalar(select(MonitorUserModel).where(MonitorUserModel.tg_user_id == tg_user_id))
+    user = await session.scalar(
+        select(MonitorUserModel).where(MonitorUserModel.tg_user_id == tg_user_id)
+    )
     if user:
         user.username = username
         await _ensure_referral_code(session, user)
@@ -69,7 +93,9 @@ async def bind_user_referrer_by_code(
     if not code:
         return False
 
-    referrer = await session.scalar(select(MonitorUserModel).where(MonitorUserModel.referral_code == code))
+    referrer = await session.scalar(
+        select(MonitorUserModel).where(MonitorUserModel.referral_code == code)
+    )
     if not referrer or referrer.tg_user_id == user.tg_user_id:
         return False
 
@@ -81,8 +107,12 @@ async def bind_user_referrer_by_code(
     return True
 
 
-async def get_monitor_user_by_tg_id(session: AsyncSession, tg_user_id: int) -> MonitorUserModel | None:
-    return await session.scalar(select(MonitorUserModel).where(MonitorUserModel.tg_user_id == tg_user_id))
+async def get_monitor_user_by_tg_id(
+    session: AsyncSession, tg_user_id: int
+) -> MonitorUserModel | None:
+    return await session.scalar(
+        select(MonitorUserModel).where(MonitorUserModel.tg_user_id == tg_user_id)
+    )
 
 
 async def add_referral_reward_once(
@@ -95,7 +125,9 @@ async def add_referral_reward_once(
     rewarded_days: int = 7,
 ) -> bool:
     exists_row = await session.scalar(
-        select(ReferralRewardModel.id).where(ReferralRewardModel.payment_charge_id == payment_charge_id)
+        select(ReferralRewardModel.id).where(
+            ReferralRewardModel.payment_charge_id == payment_charge_id
+        )
     )
     if exists_row:
         return False
@@ -112,7 +144,9 @@ async def add_referral_reward_once(
     return True
 
 
-async def count_user_tracks(session: AsyncSession, user_id: int, active_only: bool = True) -> int:
+async def count_user_tracks(
+    session: AsyncSession, user_id: int, active_only: bool = True
+) -> int:
     query = select(func.count(TrackModel.id)).where(
         TrackModel.user_id == user_id,
         TrackModel.is_deleted.is_(False),
@@ -148,6 +182,7 @@ async def expire_pro_users(
     )
 
     from bot.services.config import FREE_INTERVAL
+
     await session.execute(
         update(TrackModel)
         .where(TrackModel.user_id.in_(user_ids))
@@ -162,7 +197,9 @@ async def expire_pro_users(
     return len(user_ids)
 
 
-async def set_user_tracks_interval(session: AsyncSession, user_id: int, interval_min: int) -> int:
+async def set_user_tracks_interval(
+    session: AsyncSession, user_id: int, interval_min: int
+) -> int:
     result = await session.execute(
         update(TrackModel)
         .where(TrackModel.user_id == user_id)
@@ -220,7 +257,9 @@ async def get_user_tracks(session: AsyncSession, user_id: int) -> list[TrackMode
     return list(rows)
 
 
-async def toggle_track_active(session: AsyncSession, track_id: int, is_active: bool) -> None:
+async def toggle_track_active(
+    session: AsyncSession, track_id: int, is_active: bool
+) -> None:
     await session.execute(
         update(TrackModel).where(TrackModel.id == track_id).values(is_active=is_active)
     )
@@ -234,13 +273,19 @@ async def delete_track(session: AsyncSession, track_id: int) -> None:
     )
 
 
-async def get_user_track_by_id(session: AsyncSession, track_id: int) -> TrackModel | None:
+async def get_user_track_by_id(
+    session: AsyncSession, track_id: int
+) -> TrackModel | None:
     return await session.scalar(
-        select(TrackModel).where(TrackModel.id == track_id, TrackModel.is_deleted.is_(False))
+        select(TrackModel).where(
+            TrackModel.id == track_id, TrackModel.is_deleted.is_(False)
+        )
     )
 
 
-async def due_tracks_python_safe(session: AsyncSession, now: datetime) -> list[TrackModel]:
+async def due_tracks_python_safe(
+    session: AsyncSession, now: datetime
+) -> list[TrackModel]:
     rows = await session.scalars(
         select(TrackModel)
         .options(selectinload(TrackModel.user))
@@ -248,12 +293,16 @@ async def due_tracks_python_safe(session: AsyncSession, now: datetime) -> list[T
     )
     out: list[TrackModel] = []
     for t in list(rows):
-        if t.last_checked_at is None or t.last_checked_at <= now - timedelta(minutes=t.check_interval_min):
+        if t.last_checked_at is None or t.last_checked_at <= now - timedelta(
+            minutes=t.check_interval_min
+        ):
             out.append(t)
     return out
 
 
-async def is_duplicate_event(session: AsyncSession, track_id: int, event_hash: str, within_hours: int = 24) -> bool:
+async def is_duplicate_event(
+    session: AsyncSession, track_id: int, event_hash: str, within_hours: int = 24
+) -> bool:
     since = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=within_hours)
     existing = await session.scalar(
         select(AlertLogModel.id).where(
@@ -265,5 +314,90 @@ async def is_duplicate_event(session: AsyncSession, track_id: int, event_hash: s
     return existing is not None
 
 
-async def log_event(session: AsyncSession, track_id: int, event_type: str, event_hash: str) -> None:
-    session.add(AlertLogModel(track_id=track_id, event_type=event_type, event_hash=event_hash))
+async def log_event(
+    session: AsyncSession, track_id: int, event_type: str, event_hash: str
+) -> None:
+    session.add(
+        AlertLogModel(track_id=track_id, event_type=event_type, event_hash=event_hash)
+    )
+
+
+async def get_admin_stats(session: AsyncSession, *, days: int) -> AdminStats:
+    now = datetime.now(UTC).replace(tzinfo=None)
+    since = now - timedelta(days=days)
+
+    total_users = int(
+        await session.scalar(select(func.count(MonitorUserModel.id))) or 0
+    )
+    new_users = int(
+        await session.scalar(
+            select(func.count(MonitorUserModel.id)).where(
+                MonitorUserModel.created_at >= since
+            )
+        )
+        or 0
+    )
+    pro_users = int(
+        await session.scalar(
+            select(func.count(MonitorUserModel.id)).where(
+                MonitorUserModel.plan == "pro",
+                or_(
+                    MonitorUserModel.pro_expires_at.is_(None),
+                    MonitorUserModel.pro_expires_at >= now,
+                ),
+            )
+        )
+        or 0
+    )
+
+    total_tracks = int(
+        await session.scalar(
+            select(func.count(TrackModel.id)).where(TrackModel.is_deleted.is_(False))
+        )
+        or 0
+    )
+    active_tracks = int(
+        await session.scalar(
+            select(func.count(TrackModel.id)).where(
+                TrackModel.is_deleted.is_(False),
+                TrackModel.is_active.is_(True),
+            )
+        )
+        or 0
+    )
+    new_tracks = int(
+        await session.scalar(
+            select(func.count(TrackModel.id)).where(
+                TrackModel.is_deleted.is_(False),
+                TrackModel.created_at >= since,
+            )
+        )
+        or 0
+    )
+
+    checks_count = int(
+        await session.scalar(
+            select(func.count(SnapshotModel.id)).where(
+                SnapshotModel.fetched_at >= since
+            )
+        )
+        or 0
+    )
+    alerts_count = int(
+        await session.scalar(
+            select(func.count(AlertLogModel.id)).where(AlertLogModel.sent_at >= since)
+        )
+        or 0
+    )
+
+    return AdminStats(
+        days=days,
+        total_users=total_users,
+        new_users=new_users,
+        pro_users=pro_users,
+        total_tracks=total_tracks,
+        active_tracks=active_tracks,
+        new_tracks=new_tracks,
+        checks_count=checks_count,
+        alerts_count=alerts_count,
+    )
