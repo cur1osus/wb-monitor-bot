@@ -473,8 +473,9 @@ async def wb_ref_cb(cb: CallbackQuery, session: AsyncSession) -> None:
     user = await get_or_create_monitor_user(
         session, cb.from_user.id, cb.from_user.username
     )
+    await session.commit()
     bot_me = await cb.bot.me()
-    ref_link = f"https://t.me/{bot_me.username}?start=ref_{user.id}"
+    ref_link = f"https://t.me/{bot_me.username}?start=ref_{user.referral_code}"
     await cb.message.edit_text(
         f"👥 <b>Реферальная программа</b>\n\nПриглашайте друзей и получайте <b>+7 дней Pro</b> за каждую оплату!\n\nВаша ссылка:\n<code>{ref_link}</code>",
         reply_markup=ref_kb(ref_link),
