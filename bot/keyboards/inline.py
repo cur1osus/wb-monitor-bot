@@ -34,9 +34,15 @@ def _btn(
 # ─── Dashboard ────────────────────────────────────────────────────────────────
 
 
-def dashboard_text(plan: str, used: int) -> str:
+def dashboard_text(
+    plan: str,
+    used: int,
+    *,
+    free_interval_min: int = FREE_INTERVAL,
+    pro_interval_min: int = PRO_INTERVAL,
+) -> str:
     limit = PRO_LIMIT if plan == "pro" else FREE_LIMIT
-    interval = PRO_INTERVAL if plan == "pro" else FREE_INTERVAL
+    interval = pro_interval_min if plan == "pro" else free_interval_min
     plan_badge = "⭐ PRO" if plan == "pro" else "🆓 FREE"
     return (
         "🔎 <b>WB Monitor</b>\n"
@@ -279,6 +285,7 @@ def admin_panel_kb(selected_days: int | None = None) -> InlineKeyboardMarkup:
                 _btn(_label(14), "wbm:admin:stats:14"),
                 _btn(_label(30), "wbm:admin:stats:30"),
             ],
+            [_btn("⚙️ Настройки бота", "wbm:admin:cfg")],
             [_btn("🎁 Выдать PRO", "wbm:admin:grantpro", style="success")],
             [_btn("◀️ В меню", "wbm:home:0")],
         ]
@@ -291,3 +298,20 @@ def admin_grant_pro_kb() -> InlineKeyboardMarkup:
             [_btn("◀️ Назад", "wbm:admin:0")],
         ]
     )
+
+
+def admin_config_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                _btn("⏱ FREE интервал", "wbm:admin:cfg:free"),
+                _btn("⚡ PRO интервал", "wbm:admin:cfg:pro"),
+            ],
+            [_btn("🔎 Порог похожести", "wbm:admin:cfg:cheap")],
+            [_btn("◀️ Назад", "wbm:admin:0")],
+        ]
+    )
+
+
+def admin_config_input_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[_btn("◀️ Назад", "wbm:admin:cfg")]])

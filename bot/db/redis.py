@@ -147,6 +147,7 @@ class WbSimilarSearchCacheRD(_RDBase):
 
     track_id: int
     base_price: str
+    match_percent: int | None = None
     items: list[WbSimilarItemRD] = []
 
     @classmethod

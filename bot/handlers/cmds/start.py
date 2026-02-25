@@ -13,6 +13,8 @@ from bot.services.repository import (
     bind_user_referrer_by_code,
     count_user_tracks,
     get_or_create_monitor_user,
+    get_runtime_config,
+    runtime_config_view,
 )
 from bot.services.utils import is_admin
 from bot.settings import se
@@ -70,10 +72,16 @@ async def start_cmd(
     await MonitorUserRD.from_model(user).save(redis)
 
     used = await count_user_tracks(session, user.id, active_only=True)
+    cfg = runtime_config_view(await get_runtime_config(session))
     admin = is_admin(message.from_user.id, se)
 
     await message.answer(
-        text=dashboard_text(user.plan, used),
+        text=dashboard_text(
+            user.plan,
+            used,
+            free_interval_min=cfg.free_interval_min,
+            pro_interval_min=cfg.pro_interval_min,
+        ),
         reply_markup=dashboard_kb(admin),
     )
 

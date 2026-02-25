@@ -245,6 +245,12 @@ def _extract_reviews(product: dict[str, object]) -> int | None:
     return None
 
 
+def _normalize_match_percent(value: int | None) -> int:
+    if value is None:
+        return _MIN_CHARACTERISTICS_MATCH_PERCENT
+    return max(10, min(95, int(value)))
+
+
 def _tokenize(text: str) -> list[str]:
     normalized = text.translate(str.maketrans({c: " " for c in punctuation})).lower()
     out: list[str] = []
@@ -484,6 +490,7 @@ async def search_similar_cheaper(
     base_entity: str | None = None,
     base_brand: str | None = None,
     base_subject_id: int | None = None,
+    match_percent_threshold: int | None = None,
     limit: int = 5,
     session: ClientSession | None = None,
 ) -> list[WbSimilarProduct]:
@@ -497,6 +504,7 @@ async def search_similar_cheaper(
                 base_entity=base_entity,
                 base_brand=base_brand,
                 base_subject_id=base_subject_id,
+                match_percent_threshold=match_percent_threshold,
                 limit=limit,
             )
 
@@ -508,6 +516,7 @@ async def search_similar_cheaper(
         base_entity=base_entity,
         base_brand=base_brand,
         base_subject_id=base_subject_id,
+        match_percent_threshold=match_percent_threshold,
         limit=limit,
     )
 
@@ -521,6 +530,7 @@ async def _search_similar_all_sources(
     base_entity: str | None,
     base_brand: str | None,
     base_subject_id: int | None,
+    match_percent_threshold: int | None,
     limit: int,
 ) -> list[WbSimilarProduct]:
     base_text = f"{base_title} {base_entity or ''}"
@@ -541,6 +551,9 @@ async def _search_similar_all_sources(
         [token for token in base_anchor_tokens if _is_latin_or_digit_token(token)]
     )
     base_ecosystem = _detect_ecosystem(base_tokens)
+    strict_match_percent = _normalize_match_percent(match_percent_threshold)
+    relaxed_match_percent = max(20, strict_match_percent - 15)
+    minimal_match_percent = max(10, strict_match_percent - 30)
 
     combined: list[WbSimilarProduct] = []
     seen_ids: set[int] = set()
@@ -609,7 +622,7 @@ async def _search_similar_all_sources(
             seen_ids.add(item.wb_item_id)
 
     await collect_pass(
-        min_match_percent=_MIN_CHARACTERISTICS_MATCH_PERCENT,
+        min_match_percent=strict_match_percent,
         enforce_gender=True,
         min_relevance=2 if len(base_tokens) >= 3 else 1,
         required_anchor_matches_for_pass=required_anchor_matches,
@@ -621,7 +634,7 @@ async def _search_similar_all_sources(
             else max(1, required_anchor_matches - 1)
         )
         await collect_pass(
-            min_match_percent=_RELAXED_MATCH_PERCENT,
+            min_match_percent=relaxed_match_percent,
             enforce_gender=False,
             min_relevance=1,
             required_anchor_matches_for_pass=relaxed_anchor_matches,
@@ -633,7 +646,7 @@ async def _search_similar_all_sources(
             else max(1, required_anchor_matches - 1)
         )
         await collect_pass(
-            min_match_percent=_MINIMAL_MATCH_PERCENT,
+            min_match_percent=minimal_match_percent,
             enforce_gender=False,
             min_relevance=0,
             required_anchor_matches_for_pass=minimal_anchor_matches,

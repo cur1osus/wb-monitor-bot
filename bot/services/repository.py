@@ -14,10 +14,16 @@ from bot.db.models import (
     AlertLogModel,
     MonitorUserModel,
     ReferralRewardModel,
+    RuntimeConfigModel,
     SnapshotModel,
     TrackModel,
 )
 from bot.db.redis import MonitorUserRD
+from bot.services.config import (
+    CHEAP_MATCH_PERCENT_DEFAULT,
+    FREE_INTERVAL,
+    PRO_INTERVAL,
+)
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
@@ -34,6 +40,13 @@ class AdminStats:
     new_tracks: int
     checks_count: int
     alerts_count: int
+
+
+@dataclass(slots=True)
+class RuntimeConfigView:
+    free_interval_min: int
+    pro_interval_min: int
+    cheap_match_percent: int
 
 
 def _new_ref_code() -> str:
@@ -157,10 +170,56 @@ async def count_user_tracks(
     return int(count or 0)
 
 
+async def get_runtime_config(session: AsyncSession) -> RuntimeConfigModel:
+    cfg = await session.get(RuntimeConfigModel, 1)
+    if cfg is not None:
+        return cfg
+
+    cfg = RuntimeConfigModel(
+        id=1,
+        free_interval_min=FREE_INTERVAL,
+        pro_interval_min=PRO_INTERVAL,
+        cheap_match_percent=CHEAP_MATCH_PERCENT_DEFAULT,
+    )
+    session.add(cfg)
+    await session.flush()
+    return cfg
+
+
+def runtime_config_view(cfg: RuntimeConfigModel) -> RuntimeConfigView:
+    return RuntimeConfigView(
+        free_interval_min=int(cfg.free_interval_min),
+        pro_interval_min=int(cfg.pro_interval_min),
+        cheap_match_percent=int(cfg.cheap_match_percent),
+    )
+
+
+async def apply_runtime_intervals(
+    session: AsyncSession,
+    *,
+    free_interval_min: int,
+    pro_interval_min: int,
+) -> None:
+    pro_user_ids = select(MonitorUserModel.id).where(MonitorUserModel.plan == "pro")
+    free_user_ids = select(MonitorUserModel.id).where(MonitorUserModel.plan != "pro")
+
+    await session.execute(
+        update(TrackModel)
+        .where(TrackModel.user_id.in_(pro_user_ids), TrackModel.is_deleted.is_(False))
+        .values(check_interval_min=pro_interval_min)
+    )
+    await session.execute(
+        update(TrackModel)
+        .where(TrackModel.user_id.in_(free_user_ids), TrackModel.is_deleted.is_(False))
+        .values(check_interval_min=free_interval_min)
+    )
+
+
 async def expire_pro_users(
     session: AsyncSession,
     now: datetime,
     redis: "Redis | None" = None,
+    free_interval_min: int = FREE_INTERVAL,
 ) -> int:
     stmt_ids = select(MonitorUserModel.id, MonitorUserModel.tg_user_id).where(
         MonitorUserModel.plan == "pro",
@@ -181,12 +240,10 @@ async def expire_pro_users(
         .values(plan="free", pro_expires_at=None),
     )
 
-    from bot.services.config import FREE_INTERVAL
-
     await session.execute(
         update(TrackModel)
         .where(TrackModel.user_id.in_(user_ids))
-        .values(check_interval_min=FREE_INTERVAL),
+        .values(check_interval_min=free_interval_min),
     )
 
     # Инвалидация Redis-кэша для всех сменивших план

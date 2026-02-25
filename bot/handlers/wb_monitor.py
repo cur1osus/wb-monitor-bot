@@ -30,6 +30,8 @@ from bot.keyboards.inline import (
     dashboard_text,
     format_track_text,
     admin_grant_pro_kb,
+    admin_config_input_kb,
+    admin_config_kb,
     admin_panel_kb,
     plan_kb,
     paged_track_kb,
@@ -47,6 +49,9 @@ from bot.services.repository import (
     add_referral_reward_once,
     get_monitor_user_by_tg_id,
     get_admin_stats,
+    get_runtime_config,
+    runtime_config_view,
+    apply_runtime_intervals,
     set_user_tracks_interval,
 )
 from bot.services.utils import is_admin
@@ -55,14 +60,13 @@ from bot.services.wb_client import (
     fetch_product,
     search_similar_cheaper,
 )
-from bot.services.config import FREE_INTERVAL, PRO_INTERVAL
 from bot.settings import se
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from bot.services.repository import AdminStats
+    from bot.services.repository import AdminStats, RuntimeConfigView
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -74,6 +78,9 @@ class SettingsState(StatesGroup):
     waiting_for_drop = State()
     waiting_for_sizes = State()
     waiting_for_pro_grant = State()
+    waiting_for_free_interval = State()
+    waiting_for_pro_interval = State()
+    waiting_for_cheap_threshold = State()
 
 
 @router.callback_query(F.data == "wbm:home:0")
@@ -82,8 +89,14 @@ async def wb_home_cb(cb: CallbackQuery, session: AsyncSession, redis: "Redis") -
         session, cb.from_user.id, cb.from_user.username
     )
     used = await count_user_tracks(session, user.id, active_only=True)
+    cfg = runtime_config_view(await get_runtime_config(session))
     await cb.message.edit_text(
-        dashboard_text(user.plan, used),
+        dashboard_text(
+            user.plan,
+            used,
+            free_interval_min=cfg.free_interval_min,
+            pro_interval_min=cfg.pro_interval_min,
+        ),
         reply_markup=dashboard_kb(is_admin(cb.from_user.id, se)),
     )
 
@@ -148,7 +161,8 @@ async def wb_add_item_from_text(
         await msg.answer("❌ Не удалось получить данные о товаре. Проверьте ссылку.")
         return
 
-    interval = PRO_INTERVAL if user.plan == "pro" else FREE_INTERVAL
+    cfg = runtime_config_view(await get_runtime_config(session))
+    interval = cfg.pro_interval_min if user.plan == "pro" else cfg.free_interval_min
     track_url = (
         url_or_text
         if url_or_text.startswith("http")
@@ -306,9 +320,15 @@ async def wb_remove_yes_cb(cb: CallbackQuery, session: AsyncSession) -> None:
     user = await get_or_create_monitor_user(
         session, cb.from_user.id, cb.from_user.username
     )
+    cfg = runtime_config_view(await get_runtime_config(session))
     used = await count_user_tracks(session, user.id, active_only=True)
     await cb.message.edit_text(
-        dashboard_text(user.plan, used),
+        dashboard_text(
+            user.plan,
+            used,
+            free_interval_min=cfg.free_interval_min,
+            pro_interval_min=cfg.pro_interval_min,
+        ),
         reply_markup=dashboard_kb(is_admin(cb.from_user.id, se)),
     )
     await cb.answer("Трек удален")
@@ -336,8 +356,9 @@ async def wb_find_cheaper_cb(
     )
     await cb.answer("Ищу варианты...")
 
+    cfg = runtime_config_view(await get_runtime_config(session))
     cached = await WbSimilarSearchCacheRD.get(redis, track.id)
-    if cached is None:
+    if cached is None or cached.match_percent != cfg.cheap_match_percent:
         current = await fetch_product(redis, track.wb_item_id, use_cache=False)
         if not current or current.price is None:
             await cb.message.edit_text(
@@ -351,6 +372,7 @@ async def wb_find_cheaper_cb(
             base_entity=current.entity,
             base_brand=current.brand,
             base_subject_id=current.subject_id,
+            match_percent_threshold=cfg.cheap_match_percent,
             max_price=current.price,
             exclude_wb_item_id=track.wb_item_id,
             limit=5,
@@ -368,6 +390,7 @@ async def wb_find_cheaper_cb(
         await WbSimilarSearchCacheRD(
             track_id=track.id,
             base_price=current_price_text,
+            match_percent=cfg.cheap_match_percent,
             items=alternatives,
         ).save(redis)
     else:
@@ -425,9 +448,10 @@ async def wb_plan_cb(cb: CallbackQuery, session: AsyncSession) -> None:
     user = await get_or_create_monitor_user(
         session, cb.from_user.id, cb.from_user.username
     )
+    cfg = runtime_config_view(await get_runtime_config(session))
     used = await count_user_tracks(session, user.id, active_only=True)
     limit = 50 if user.plan == "pro" else 5
-    interval = 60 if user.plan == "pro" else 360
+    interval = cfg.pro_interval_min if user.plan == "pro" else cfg.free_interval_min
 
     is_pro = user.plan == "pro"
     expires_str = (
@@ -443,7 +467,10 @@ async def wb_plan_cb(cb: CallbackQuery, session: AsyncSession) -> None:
     if is_pro:
         text += "✅ Pro активен\n"
     else:
-        text += "🚀 Обновитесь до <b>PRO</b> — 50 треков, проверка каждый час!"
+        text += (
+            "🚀 Обновитесь до <b>PRO</b> — 50 треков, "
+            f"проверка каждые {cfg.pro_interval_min} мин!"
+        )
 
     await cb.message.edit_text(text, reply_markup=plan_kb(is_pro, expires_str))
 
@@ -473,6 +500,7 @@ async def successful_payment_handler(
     msg: Message, session: AsyncSession, redis: "Redis"
 ) -> None:
     payment = msg.successful_payment
+    cfg = runtime_config_view(await get_runtime_config(session))
     user = await get_or_create_monitor_user(
         session, msg.from_user.id, msg.from_user.username
     )
@@ -484,7 +512,7 @@ async def successful_payment_handler(
     )
     user.plan = "pro"
     user.pro_expires_at = base_expiry + timedelta(days=30)
-    await set_user_tracks_interval(session, user.id, PRO_INTERVAL)
+    await set_user_tracks_interval(session, user.id, cfg.pro_interval_min)
 
     referral_bonus_applied = False
     if user.referred_by_tg_user_id and payment.telegram_payment_charge_id:
@@ -506,7 +534,9 @@ async def successful_payment_handler(
                 )
                 referrer.plan = "pro"
                 referrer.pro_expires_at = ref_base + timedelta(days=7)
-                await set_user_tracks_interval(session, referrer.id, PRO_INTERVAL)
+                await set_user_tracks_interval(
+                    session, referrer.id, cfg.pro_interval_min
+                )
                 referral_bonus_applied = True
                 # Инвалидируем кэш реферера
                 await MonitorUserRD.invalidate(redis, referrer.tg_user_id)
@@ -576,6 +606,168 @@ def _admin_stats_text(stats: "AdminStats") -> str:
         f"📦 Треки: <b>{stats.total_tracks}</b> (активных: {stats.active_tracks}, новых: +{stats.new_tracks})\n"
         f"🔁 Проверок (snapshots): <b>{stats.checks_count}</b>\n"
         f"🔔 Уведомлений: <b>{stats.alerts_count}</b>"
+    )
+
+
+def _admin_runtime_config_text(cfg: "RuntimeConfigView") -> str:
+    return (
+        "⚙️ <b>Настройки бота</b>\n\n"
+        f"🆓 FREE интервал: <b>{cfg.free_interval_min} мин</b>\n"
+        f"⭐ PRO интервал: <b>{cfg.pro_interval_min} мин</b>\n"
+        f"🔎 Порог похожести: <b>{cfg.cheap_match_percent}%</b>\n\n"
+        "Изменения применяются сразу."
+    )
+
+
+@router.callback_query(F.data == "wbm:admin:cfg")
+async def wb_admin_cfg_cb(
+    cb: CallbackQuery, session: AsyncSession, state: FSMContext
+) -> None:
+    if not is_admin(cb.from_user.id, se):
+        await cb.answer("❌ Нет доступа", show_alert=True)
+        return
+
+    await state.clear()
+    cfg = runtime_config_view(await get_runtime_config(session))
+    await cb.message.edit_text(
+        _admin_runtime_config_text(cfg),
+        reply_markup=admin_config_kb(),
+    )
+
+
+@router.callback_query(F.data == "wbm:admin:cfg:free")
+async def wb_admin_cfg_free_cb(cb: CallbackQuery, state: FSMContext) -> None:
+    if not is_admin(cb.from_user.id, se):
+        await cb.answer("❌ Нет доступа", show_alert=True)
+        return
+
+    await state.set_state(SettingsState.waiting_for_free_interval)
+    await cb.message.edit_text(
+        "🆓 Введите новый интервал FREE в минутах (от 5 до 1440):",
+        reply_markup=admin_config_input_kb(),
+    )
+
+
+@router.callback_query(F.data == "wbm:admin:cfg:pro")
+async def wb_admin_cfg_pro_cb(cb: CallbackQuery, state: FSMContext) -> None:
+    if not is_admin(cb.from_user.id, se):
+        await cb.answer("❌ Нет доступа", show_alert=True)
+        return
+
+    await state.set_state(SettingsState.waiting_for_pro_interval)
+    await cb.message.edit_text(
+        "⭐ Введите новый интервал PRO в минутах (от 1 до 1440):",
+        reply_markup=admin_config_input_kb(),
+    )
+
+
+@router.callback_query(F.data == "wbm:admin:cfg:cheap")
+async def wb_admin_cfg_cheap_cb(cb: CallbackQuery, state: FSMContext) -> None:
+    if not is_admin(cb.from_user.id, se):
+        await cb.answer("❌ Нет доступа", show_alert=True)
+        return
+
+    await state.set_state(SettingsState.waiting_for_cheap_threshold)
+    await cb.message.edit_text(
+        "🔎 Введите порог похожести для поиска дешевле (от 10 до 95):",
+        reply_markup=admin_config_input_kb(),
+    )
+
+
+@router.message(SettingsState.waiting_for_free_interval, F.text)
+async def wb_admin_cfg_free_msg(
+    msg: Message, state: FSMContext, session: AsyncSession
+) -> None:
+    if not msg.from_user or not is_admin(msg.from_user.id, se):
+        await state.clear()
+        return
+
+    try:
+        value = int(msg.text.strip())
+    except ValueError:
+        await msg.answer("❌ Введите целое число от 5 до 1440.")
+        return
+    if value < 5 or value > 1440:
+        await msg.answer("❌ Значение вне диапазона: 5..1440")
+        return
+
+    cfg = await get_runtime_config(session)
+    cfg.free_interval_min = value
+    cfg.updated_at = datetime.now(UTC).replace(tzinfo=None)
+    await apply_runtime_intervals(
+        session,
+        free_interval_min=cfg.free_interval_min,
+        pro_interval_min=cfg.pro_interval_min,
+    )
+    await session.commit()
+    await state.clear()
+
+    await msg.answer(
+        _admin_runtime_config_text(runtime_config_view(cfg)),
+        reply_markup=admin_config_kb(),
+    )
+
+
+@router.message(SettingsState.waiting_for_pro_interval, F.text)
+async def wb_admin_cfg_pro_msg(
+    msg: Message, state: FSMContext, session: AsyncSession
+) -> None:
+    if not msg.from_user or not is_admin(msg.from_user.id, se):
+        await state.clear()
+        return
+
+    try:
+        value = int(msg.text.strip())
+    except ValueError:
+        await msg.answer("❌ Введите целое число от 1 до 1440.")
+        return
+    if value < 1 or value > 1440:
+        await msg.answer("❌ Значение вне диапазона: 1..1440")
+        return
+
+    cfg = await get_runtime_config(session)
+    cfg.pro_interval_min = value
+    cfg.updated_at = datetime.now(UTC).replace(tzinfo=None)
+    await apply_runtime_intervals(
+        session,
+        free_interval_min=cfg.free_interval_min,
+        pro_interval_min=cfg.pro_interval_min,
+    )
+    await session.commit()
+    await state.clear()
+
+    await msg.answer(
+        _admin_runtime_config_text(runtime_config_view(cfg)),
+        reply_markup=admin_config_kb(),
+    )
+
+
+@router.message(SettingsState.waiting_for_cheap_threshold, F.text)
+async def wb_admin_cfg_cheap_msg(
+    msg: Message, state: FSMContext, session: AsyncSession
+) -> None:
+    if not msg.from_user or not is_admin(msg.from_user.id, se):
+        await state.clear()
+        return
+
+    try:
+        value = int(msg.text.strip())
+    except ValueError:
+        await msg.answer("❌ Введите целое число от 10 до 95.")
+        return
+    if value < 10 or value > 95:
+        await msg.answer("❌ Значение вне диапазона: 10..95")
+        return
+
+    cfg = await get_runtime_config(session)
+    cfg.cheap_match_percent = value
+    cfg.updated_at = datetime.now(UTC).replace(tzinfo=None)
+    await session.commit()
+    await state.clear()
+
+    await msg.answer(
+        _admin_runtime_config_text(runtime_config_view(cfg)),
+        reply_markup=admin_config_kb(),
     )
 
 
@@ -672,7 +864,8 @@ async def wb_admin_grant_pro_msg(
     )
     user.plan = "pro"
     user.pro_expires_at = base_expiry + timedelta(days=days)
-    await set_user_tracks_interval(session, user.id, PRO_INTERVAL)
+    cfg = runtime_config_view(await get_runtime_config(session))
+    await set_user_tracks_interval(session, user.id, cfg.pro_interval_min)
     await session.commit()
     await MonitorUserRD.invalidate(redis, user.tg_user_id)
 
@@ -701,9 +894,15 @@ async def wb_cancel_cb(
     user = await get_or_create_monitor_user(
         session, cb.from_user.id, cb.from_user.username
     )
+    cfg = runtime_config_view(await get_runtime_config(session))
     used = await count_user_tracks(session, user.id, active_only=True)
     await cb.message.edit_text(
-        dashboard_text(user.plan, used),
+        dashboard_text(
+            user.plan,
+            used,
+            free_interval_min=cfg.free_interval_min,
+            pro_interval_min=cfg.pro_interval_min,
+        ),
         reply_markup=dashboard_kb(is_admin(cb.from_user.id, se)),
     )
 

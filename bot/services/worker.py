@@ -16,6 +16,7 @@ from bot.db.redis import WorkerStateRD
 from bot.services.repository import (
     due_tracks_python_safe,
     expire_pro_users,
+    get_runtime_config,
     is_duplicate_event,
     log_event,
 )
@@ -217,8 +218,12 @@ async def start_worker(
                     now_naive = datetime.now(UTC).replace(tzinfo=None)
                     if last_expiry_check != now_naive.date():
                         async with db_pool() as db_session, db_session.begin():
+                            cfg = await get_runtime_config(db_session)
                             expired = await expire_pro_users(
-                                db_session, now_naive, redis=redis
+                                db_session,
+                                now_naive,
+                                redis=redis,
+                                free_interval_min=cfg.free_interval_min,
                             )
                         if expired:
                             logger.info("Expired %s pro users", expired)

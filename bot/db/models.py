@@ -47,6 +47,19 @@ class MonitorUserModel(Base):
     )
 
 
+class RuntimeConfigModel(Base):
+    __tablename__ = "monitor_runtime_config"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    free_interval_min: Mapped[int] = mapped_column(Integer, default=360)
+    pro_interval_min: Mapped[int] = mapped_column(Integer, default=60)
+    cheap_match_percent: Mapped[int] = mapped_column(Integer, default=50)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(UTC).replace(tzinfo=None),
+    )
+
+
 class TrackModel(Base):
     __tablename__ = "monitor_tracks"
 
