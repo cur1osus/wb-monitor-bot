@@ -119,7 +119,12 @@ def format_track_text(track: TrackModel) -> str:
     )
 
 
-def paged_track_kb(track: TrackModel, page: int, total: int) -> InlineKeyboardMarkup:
+def paged_track_kb(
+    track: TrackModel,
+    page: int,
+    total: int,
+    confirm_remove: bool = False,
+) -> InlineKeyboardMarkup:
     if track.is_active:
         action_btn = _btn("⏸ Пауза", f"wbm:pause:{track.id}")
     else:
@@ -136,15 +141,23 @@ def paged_track_kb(track: TrackModel, page: int, total: int) -> InlineKeyboardMa
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
+                _btn(
+                    "⚠️ Да, удалить" if confirm_remove else "🗑 Удалить",
+                    f"wbm:remove_yes:{track.id}"
+                    if confirm_remove
+                    else f"wbm:remove:{track.id}",
+                    style="danger",
+                ),
+                _btn(
+                    "↩️ Нет" if confirm_remove else "⚙️ Настройки",
+                    f"wbm:remove_no:{track.id}"
+                    if confirm_remove
+                    else f"wbm:settings:{track.id}",
+                ),
+            ],
+            [
                 action_btn,
-                _btn("⚙️ Настройки", f"wbm:settings:{track.id}"),
-            ],
-            [
                 _btn("🔎 Найти дешевле", f"wbm:cheap:{track.id}"),
-            ],
-            [
-                # danger — красный для удаления (Bot API 9.4)
-                _btn("🗑 Удалить", f"wbm:remove:{track.id}", style="danger"),
             ],
             nav,
             [_btn("◀️ В меню", "wbm:home:0")],

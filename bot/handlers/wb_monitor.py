@@ -244,6 +244,47 @@ async def wb_resume_cb(cb: CallbackQuery, session: AsyncSession) -> None:
 @router.callback_query(F.data.regexp(r"wbm:remove:(\d+)"))
 async def wb_remove_cb(cb: CallbackQuery, session: AsyncSession) -> None:
     track_id = int(cb.data.split(":")[2])
+    user = await get_or_create_monitor_user(
+        session, cb.from_user.id, cb.from_user.username
+    )
+    tracks = await get_user_tracks(session, user.id)
+    for idx, track in enumerate(tracks):
+        if track.id == track_id:
+            await cb.message.edit_text(
+                format_track_text(track),
+                reply_markup=paged_track_kb(
+                    track,
+                    idx,
+                    len(tracks),
+                    confirm_remove=True,
+                ),
+            )
+            await cb.answer("Подтвердите удаление")
+            return
+    await cb.answer("Трек не найден", show_alert=True)
+
+
+@router.callback_query(F.data.regexp(r"wbm:remove_no:(\d+)"))
+async def wb_remove_no_cb(cb: CallbackQuery, session: AsyncSession) -> None:
+    track_id = int(cb.data.split(":")[2])
+    user = await get_or_create_monitor_user(
+        session, cb.from_user.id, cb.from_user.username
+    )
+    tracks = await get_user_tracks(session, user.id)
+    for idx, track in enumerate(tracks):
+        if track.id == track_id:
+            await cb.message.edit_text(
+                format_track_text(track),
+                reply_markup=paged_track_kb(track, idx, len(tracks)),
+            )
+            await cb.answer("Удаление отменено")
+            return
+    await cb.answer("Трек не найден", show_alert=True)
+
+
+@router.callback_query(F.data.regexp(r"wbm:remove_yes:(\d+)"))
+async def wb_remove_yes_cb(cb: CallbackQuery, session: AsyncSession) -> None:
+    track_id = int(cb.data.split(":")[2])
     await delete_track(session, track_id)
     await session.commit()
     user = await get_or_create_monitor_user(
