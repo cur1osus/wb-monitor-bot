@@ -670,10 +670,25 @@ async def wb_back_cb(cb: CallbackQuery, session: AsyncSession) -> None:
 # ─── Settings Handlers ───────────────────────────────────────────────────────
 
 
+async def _hide_settings_prompt_keyboard(msg: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    prompt_message_id = data.get("prompt_message_id")
+    if not isinstance(prompt_message_id, int):
+        return
+    try:
+        await msg.bot.edit_message_reply_markup(
+            chat_id=msg.chat.id,
+            message_id=prompt_message_id,
+            reply_markup=None,
+        )
+    except TelegramBadRequest:
+        pass
+
+
 @router.callback_query(F.data.regexp(r"wbm:price:(\d+)"))
 async def wb_settings_price_cb(cb: CallbackQuery, state: FSMContext) -> None:
     track_id = int(cb.data.split(":")[2])
-    await state.update_data(track_id=track_id)
+    await state.update_data(track_id=track_id, prompt_message_id=cb.message.message_id)
     await state.set_state(SettingsState.waiting_for_price)
 
     cancel_kb = InlineKeyboardMarkup(
@@ -695,6 +710,10 @@ async def wb_settings_price_cb(cb: CallbackQuery, state: FSMContext) -> None:
 async def wb_settings_price_msg(
     msg: Message, state: FSMContext, session: AsyncSession
 ) -> None:
+    if not msg.from_user:
+        await state.clear()
+        return
+
     data = await state.get_data()
     track_id = data.get("track_id")
     if not track_id:
@@ -712,9 +731,19 @@ async def wb_settings_price_msg(
     track = await get_user_track_by_id(session, track_id)
     if track:
         track.target_price = new_price
+        user = await get_or_create_monitor_user(
+            session, msg.from_user.id, msg.from_user.username
+        )
         await session.commit()
+        await _hide_settings_prompt_keyboard(msg, state)
         await msg.answer(
-            f"✅ Целевая цена для <b>{track.title}</b> установлена: {new_price} ₽"
+            f"✅ Целевая цена для <b>{track.title}</b> установлена: {new_price} ₽",
+            reply_markup=settings_kb(
+                track_id,
+                has_sizes=bool(track.last_sizes),
+                pro_plan=user.plan == "pro",
+                qty_on=track.watch_qty,
+            ),
         )
 
     await state.clear()
@@ -723,7 +752,7 @@ async def wb_settings_price_msg(
 @router.callback_query(F.data.regexp(r"wbm:drop:(\d+)"))
 async def wb_settings_drop_cb(cb: CallbackQuery, state: FSMContext) -> None:
     track_id = int(cb.data.split(":")[2])
-    await state.update_data(track_id=track_id)
+    await state.update_data(track_id=track_id, prompt_message_id=cb.message.message_id)
     await state.set_state(SettingsState.waiting_for_drop)
 
     cancel_kb = InlineKeyboardMarkup(
@@ -744,6 +773,10 @@ async def wb_settings_drop_cb(cb: CallbackQuery, state: FSMContext) -> None:
 async def wb_settings_drop_msg(
     msg: Message, state: FSMContext, session: AsyncSession
 ) -> None:
+    if not msg.from_user:
+        await state.clear()
+        return
+
     data = await state.get_data()
     track_id = data.get("track_id")
     if not track_id:
@@ -761,9 +794,19 @@ async def wb_settings_drop_msg(
     track = await get_user_track_by_id(session, track_id)
     if track:
         track.target_drop_percent = new_drop
+        user = await get_or_create_monitor_user(
+            session, msg.from_user.id, msg.from_user.username
+        )
         await session.commit()
+        await _hide_settings_prompt_keyboard(msg, state)
         await msg.answer(
-            f"✅ Уведомление о падении цены на {new_drop}% для <b>{track.title}</b> включено."
+            f"✅ Уведомление о падении цены на {new_drop}% для <b>{track.title}</b> включено.",
+            reply_markup=settings_kb(
+                track_id,
+                has_sizes=bool(track.last_sizes),
+                pro_plan=user.plan == "pro",
+                qty_on=track.watch_qty,
+            ),
         )
 
     await state.clear()
