@@ -138,25 +138,28 @@ def paged_track_kb(
     if page < total - 1:
         nav.append(_btn("➡️", f"wbm:page:{page + 1}"))
 
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
+    if confirm_remove:
+        top_rows = [
             [
                 _btn(
-                    "⚠️ Да, удалить" if confirm_remove else "🗑 Удалить",
-                    f"wbm:remove_yes:{track.id}"
-                    if confirm_remove
-                    else f"wbm:remove:{track.id}",
+                    "⚠️ Да, удалить",
+                    f"wbm:remove_yes:{track.id}",
                     style="danger",
                 ),
-                _btn(
-                    "↩️ Нет" if confirm_remove else "⚙️ Настройки",
-                    f"wbm:remove_no:{track.id}"
-                    if confirm_remove
-                    else f"wbm:settings:{track.id}",
-                ),
-            ],
+                _btn("↩️ Нет", f"wbm:remove_no:{track.id}"),
+            ]
+        ]
+    else:
+        top_rows = [[_btn("🗑 Удалить", f"wbm:remove:{track.id}", style="danger")]]
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            *top_rows,
             [
                 action_btn,
+                _btn("⚙️ Настройки", f"wbm:settings:{track.id}"),
+            ],
+            [
                 _btn("🔎 Найти дешевле", f"wbm:cheap:{track.id}"),
             ],
             nav,
