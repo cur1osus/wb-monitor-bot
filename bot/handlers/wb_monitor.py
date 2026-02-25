@@ -358,7 +358,7 @@ async def wb_settings_cb(cb: CallbackQuery, session: AsyncSession) -> None:
             track_id,
             has_sizes=bool(track.watch_sizes),
             pro_plan=user.plan == "pro",
-            qty_on=track.watch_stock,
+            qty_on=track.watch_qty,
         ),
     )
 
