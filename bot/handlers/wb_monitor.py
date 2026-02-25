@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import UTC, datetime, timedelta
 from html import escape
 from typing import TYPE_CHECKING
@@ -65,6 +66,7 @@ if TYPE_CHECKING:
 
 router = Router()
 logger = logging.getLogger(__name__)
+_LIKELY_WB_INPUT_RE = re.compile(r"wildberries|wb\.ru|\d{6,15}", re.IGNORECASE)
 
 
 class SettingsState(StatesGroup):
@@ -101,7 +103,7 @@ async def wb_add_cb(cb: CallbackQuery) -> None:
 
 @router.message(
     StateFilter(None),
-    F.text.regexp(r"https?://.*(wildberries|wb\.ru).*|\d{6,15}"),
+    F.text,
 )
 async def wb_add_item_from_text(
     msg: Message,
@@ -109,6 +111,9 @@ async def wb_add_item_from_text(
     redis: "Redis",
 ) -> None:
     url_or_text = msg.text.strip()
+    if not _LIKELY_WB_INPUT_RE.search(url_or_text):
+        return
+
     wb_item_id = extract_wb_item_id(url_or_text)
 
     if not wb_item_id:

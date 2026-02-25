@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from redis.asyncio import Redis
 
 WB_RE = re.compile(r"(\d{6,15})")
+WB_CATALOG_RE = re.compile(r"/catalog/(\d{6,15})", re.IGNORECASE)
 _CYRILLIC_RE = re.compile(r"[а-яё]")
 SEARCH_WB_URLS = (
     "https://search.wb.ru/exactmatch/ru/common/v13/search?ab_testing=false&appType=1&curr=rub&dest=-1257786&lang=ru&page={page}&query={query}&resultset=catalog&sort=popular&spp=30&suppressSpellcheck=false",
@@ -178,6 +179,13 @@ class WbCatalogCategory:
 
 
 def extract_wb_item_id(url_or_text: str) -> int | None:
+    catalog_match = WB_CATALOG_RE.search(url_or_text)
+    if catalog_match:
+        try:
+            return int(catalog_match.group(1))
+        except ValueError:
+            return None
+
     found = WB_RE.search(url_or_text)
     if not found:
         return None
