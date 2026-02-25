@@ -384,7 +384,7 @@ async def wb_plan_cb(cb: CallbackQuery, session: AsyncSession) -> None:
         f"⏱ Интервал проверок: {interval} мин\n\n"
     )
     if is_pro:
-        text += f"✅ Pro активен до: {expires_str or '∞'}\n"
+        text += "✅ Pro активен\n"
     else:
         text += "🚀 Обновитесь до <b>PRO</b> — 50 треков, проверка каждый час!"
 
