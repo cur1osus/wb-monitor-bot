@@ -11,6 +11,8 @@ Inline-клавиатуры с поддержкой Bot API 9.4.
 
 from __future__ import annotations
 
+from urllib.parse import urlencode
+
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from bot.db.models import TrackModel
@@ -217,12 +219,18 @@ def invoice_kb() -> InlineKeyboardMarkup:
 
 
 def ref_kb(ref_link: str) -> InlineKeyboardMarkup:
+    share_query = urlencode(
+        {
+            "url": ref_link,
+            "text": "WB Monitor — отслеживай цены на Wildberries!",
+        }
+    )
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text="📤 Поделиться ссылкой",
-                    url=f"https://t.me/share/url?url={ref_link}&text=WB Monitor — отслеживай цены на Wildberries!",
+                    url=f"https://t.me/share/url?{share_query}",
                 )
             ],
             [_btn("◀️ В меню", "wbm:home:0")],
