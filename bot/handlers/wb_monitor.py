@@ -812,6 +812,58 @@ async def wb_settings_drop_msg(
     await state.clear()
 
 
+@router.callback_query(F.data.regexp(r"wbm:price_reset:(\d+)"))
+async def wb_settings_price_reset_cb(cb: CallbackQuery, session: AsyncSession) -> None:
+    track_id = int(cb.data.split(":")[2])
+    track = await get_user_track_by_id(session, track_id)
+    if not track:
+        await cb.answer("Трек не найден", show_alert=True)
+        return
+
+    user = await get_or_create_monitor_user(
+        session, cb.from_user.id, cb.from_user.username
+    )
+    track.target_price = None
+    await session.commit()
+
+    await cb.message.edit_text(
+        format_track_text(track) + "\n\n⚙️ Настройки:",
+        reply_markup=settings_kb(
+            track_id,
+            has_sizes=bool(track.last_sizes),
+            pro_plan=user.plan == "pro",
+            qty_on=track.watch_qty,
+        ),
+    )
+    await cb.answer("Цель цены сброшена")
+
+
+@router.callback_query(F.data.regexp(r"wbm:drop_reset:(\d+)"))
+async def wb_settings_drop_reset_cb(cb: CallbackQuery, session: AsyncSession) -> None:
+    track_id = int(cb.data.split(":")[2])
+    track = await get_user_track_by_id(session, track_id)
+    if not track:
+        await cb.answer("Трек не найден", show_alert=True)
+        return
+
+    user = await get_or_create_monitor_user(
+        session, cb.from_user.id, cb.from_user.username
+    )
+    track.target_drop_percent = None
+    await session.commit()
+
+    await cb.message.edit_text(
+        format_track_text(track) + "\n\n⚙️ Настройки:",
+        reply_markup=settings_kb(
+            track_id,
+            has_sizes=bool(track.last_sizes),
+            pro_plan=user.plan == "pro",
+            qty_on=track.watch_qty,
+        ),
+    )
+    await cb.answer("Порог падения сброшен")
+
+
 @router.callback_query(F.data.regexp(r"wbm:qty:(\d+)"))
 async def wb_settings_qty_cb(cb: CallbackQuery, session: AsyncSession) -> None:
     track_id = int(cb.data.split(":")[2])

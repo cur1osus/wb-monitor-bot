@@ -127,3 +127,6 @@ dmypy.json
 # Runtime data
 psql/data/
 redis/data/
+
+# Local deployment notes for LLM sessions
+DEPLOY_LLM.md

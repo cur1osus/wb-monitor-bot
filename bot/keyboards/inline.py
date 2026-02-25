@@ -163,6 +163,10 @@ def settings_kb(
             _btn("🎯 Цель цены", f"wbm:price:{track_id}", style="primary"),
             _btn("📉 Падение %", f"wbm:drop:{track_id}", style="primary"),
         ],
+        [
+            _btn("♻️ Сброс цели", f"wbm:price_reset:{track_id}"),
+            _btn("♻️ Сброс падения", f"wbm:drop_reset:{track_id}"),
+        ],
     ]
     if pro_plan:
         qty_style = "success" if qty_on else None
