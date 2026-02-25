@@ -22,7 +22,7 @@ from bot.db.redis import WbItemCacheRD
 if TYPE_CHECKING:
     from redis.asyncio import Redis
 
-WB_RE = re.compile(r"(\d{6,12})")
+WB_RE = re.compile(r"(\d{6,15})")
 _CYRILLIC_RE = re.compile(r"[а-яё]")
 SEARCH_WB_URLS = (
     "https://search.wb.ru/exactmatch/ru/common/v13/search?ab_testing=false&appType=1&curr=rub&dest=-1257786&lang=ru&page={page}&query={query}&resultset=catalog&sort=popular&spp=30&suppressSpellcheck=false",

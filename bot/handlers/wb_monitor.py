@@ -86,6 +86,11 @@ async def wb_home_cb(cb: CallbackQuery, session: AsyncSession, redis: "Redis") -
     )
 
 
+@router.callback_query(F.data == "wbm:noop:0")
+async def wb_noop_cb(cb: CallbackQuery) -> None:
+    await cb.answer()
+
+
 @router.callback_query(F.data == "wbm:add:0")
 async def wb_add_cb(cb: CallbackQuery) -> None:
     await cb.message.edit_text(
@@ -94,7 +99,10 @@ async def wb_add_cb(cb: CallbackQuery) -> None:
     )
 
 
-@router.message(StateFilter(None), F.text.regexp(r"https?://.*wildberries.*|\d{6,12}"))
+@router.message(
+    StateFilter(None),
+    F.text.regexp(r"https?://.*(wildberries|wb\.ru).*|\d{6,15}"),
+)
 async def wb_add_item_from_text(
     msg: Message,
     session: AsyncSession,
