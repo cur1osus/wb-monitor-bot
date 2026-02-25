@@ -11,7 +11,7 @@ Inline-клавиатуры с поддержкой Bot API 9.4.
 
 from __future__ import annotations
 
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -223,7 +223,8 @@ def ref_kb(ref_link: str) -> InlineKeyboardMarkup:
         {
             "url": ref_link,
             "text": "WB Monitor — отслеживай цены на Wildberries!",
-        }
+        },
+        quote_via=quote,
     )
     return InlineKeyboardMarkup(
         inline_keyboard=[
