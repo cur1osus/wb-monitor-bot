@@ -164,6 +164,8 @@ async def wb_add_item_from_text(
         product.in_stock,
         product.total_qty,
         product.sizes,
+        product.rating,
+        product.reviews,
         interval,
     )
     await session.commit()
@@ -172,6 +174,7 @@ async def wb_add_item_from_text(
         f"✅ Товар добавлен в отслеживание!\n\n"
         f"📦 {product.title}\n"
         f"💰 Цена: {f'{product.price}₽' if product.price else 'не указана'}\n"
+        f"⭐ Рейтинг: {f'{product.rating} ({product.reviews or 0} отзывов)' if product.rating is not None else 'не указан'}\n"
         f"📦 В наличии: {'да' if product.in_stock else 'нет'}",
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[

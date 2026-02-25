@@ -154,6 +154,8 @@ class WbProductSnapshot:
     wb_item_id: int
     title: str
     price: Decimal | None
+    rating: Decimal | None
+    reviews: int | None
     in_stock: bool
     total_qty: int | None
     sizes: list[str]
@@ -214,6 +216,33 @@ def _extract_price(product: dict[str, object]) -> Decimal | None:
     if not isinstance(sale_price, (int, float)):
         return None
     return Decimal(str(sale_price)) / Decimal("100")
+
+
+def _extract_rating(product: dict[str, object]) -> Decimal | None:
+    raw = product.get("nmReviewRating")
+    if not isinstance(raw, (int, float)):
+        raw = product.get("reviewRating")
+    if not isinstance(raw, (int, float)):
+        raw = product.get("rating")
+    if not isinstance(raw, (int, float)):
+        return None
+    return Decimal(str(raw))
+
+
+def _extract_reviews(product: dict[str, object]) -> int | None:
+    raw = product.get("nmFeedbacks")
+    value = _parse_int(raw)
+    if value is not None:
+        return max(0, value)
+
+    value = _parse_int(product.get("feedbacks"))
+    if value is not None:
+        return max(0, value)
+
+    value = _parse_int(product.get("feedbacksCount"))
+    if value is not None:
+        return max(0, value)
+    return None
 
 
 def _tokenize(text: str) -> list[str]:
@@ -431,6 +460,10 @@ async def fetch_product(
                 wb_item_id=wb_item_id,
                 title=cached.title or f"WB #{wb_item_id}",
                 price=Decimal(str(cached.price)) if cached.price is not None else None,
+                rating=Decimal(str(cached.rating))
+                if cached.rating is not None
+                else None,
+                reviews=cached.reviews,
                 in_stock=bool(cached.in_stock),
                 total_qty=cached.total_qty,
                 sizes=list(cached.sizes),
@@ -983,11 +1016,15 @@ async def _fetch_and_cache(
                 total_qty += max(0, qty)
 
     price = _extract_price(p)
+    rating = _extract_rating(p)
+    reviews = _extract_reviews(p)
 
     snap = WbProductSnapshot(
         wb_item_id=wb_item_id,
         title=title,
         price=price,
+        rating=rating,
+        reviews=reviews,
         in_stock=in_stock,
         total_qty=total_qty,
         sizes=sizes,
@@ -1000,6 +1037,8 @@ async def _fetch_and_cache(
         wb_item_id=wb_item_id,
         title=snap.title,
         price=str(snap.price) if snap.price is not None else None,
+        rating=str(snap.rating) if snap.rating is not None else None,
+        reviews=snap.reviews,
         in_stock=snap.in_stock,
         total_qty=snap.total_qty,
         sizes=snap.sizes,

@@ -9,12 +9,16 @@ from typing import TYPE_CHECKING
 
 from aiohttp import ClientSession
 from aiogram.types import LinkPreviewOptions
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from bot.db.models import MonitorUserModel, SnapshotModel
+from bot.db.models import SnapshotModel
 from bot.db.redis import WorkerStateRD
-from bot.services.repository import due_tracks_python_safe, expire_pro_users, is_duplicate_event, log_event
+from bot.services.repository import (
+    due_tracks_python_safe,
+    expire_pro_users,
+    is_duplicate_event,
+    log_event,
+)
 from bot.services.wb_client import fetch_product
 
 if TYPE_CHECKING:
@@ -26,13 +30,13 @@ logger = logging.getLogger(__name__)
 ERROR_LIMIT = 5
 
 _MSG: dict[str, str] = {
-    "price_target":   "💸 Цена достигла цели: {price} ₽ (цель: {target} ₽)",
-    "price_drop":     "📉 Падение цены на {percent}%: {old} ₽ → {new} ₽",
-    "in_stock":       "✅ Товар снова в наличии",
-    "stock_changed":  "📦 Остаток изменился {direction}: {old} → {new}",
+    "price_target": "💸 Цена достигла цели: {price} ₽ (цель: {target} ₽)",
+    "price_drop": "📉 Падение цены на {percent}%: {old} ₽ → {new} ₽",
+    "in_stock": "✅ Товар снова в наличии",
+    "stock_changed": "📦 Остаток изменился {direction}: {old} → {new}",
     "sizes_appeared": "📏 Появились размеры: {sizes}",
-    "sizes_gone":     "📏 Исчезли размеры: {sizes}",
-    "paused_error":   "⚠️ Трек #{id} поставлен на паузу из-за ошибок.\n{title}",
+    "sizes_gone": "📏 Исчезли размеры: {sizes}",
+    "paused_error": "⚠️ Трек #{id} поставлен на паузу из-за ошибок.\n{title}",
 }
 
 
@@ -72,26 +76,62 @@ async def run_cycle(
                 async with db_session.begin_nested():
                     events: list[str] = []
 
-                    if t.target_price is not None and snap.price is not None and snap.price <= t.target_price:
-                        events.append(_msg("price_target", price=str(snap.price), target=str(t.target_price)))
+                    if (
+                        t.target_price is not None
+                        and snap.price is not None
+                        and snap.price <= t.target_price
+                    ):
+                        events.append(
+                            _msg(
+                                "price_target",
+                                price=str(snap.price),
+                                target=str(t.target_price),
+                            )
+                        )
 
                     drop = _price_drop_percent(t.last_price, snap.price)
                     if t.target_drop_percent and drop >= t.target_drop_percent:
-                        events.append(_msg("price_drop", percent=str(drop), old=str(t.last_price), new=str(snap.price)))
+                        events.append(
+                            _msg(
+                                "price_drop",
+                                percent=str(drop),
+                                old=str(t.last_price),
+                                new=str(snap.price),
+                            )
+                        )
 
                     if t.watch_stock and t.last_in_stock is False and snap.in_stock:
                         events.append(_msg("in_stock"))
 
-                    if t.user.plan == "pro" and t.watch_qty and t.last_qty is not None and snap.total_qty is not None and t.last_qty != snap.total_qty:
+                    if (
+                        t.user.plan == "pro"
+                        and t.watch_qty
+                        and t.last_qty is not None
+                        and snap.total_qty is not None
+                        and t.last_qty != snap.total_qty
+                    ):
                         direction = "⬆️" if snap.total_qty > t.last_qty else "⬇️"
-                        events.append(_msg("stock_changed", direction=direction, old=str(t.last_qty), new=str(snap.total_qty)))
+                        events.append(
+                            _msg(
+                                "stock_changed",
+                                direction=direction,
+                                old=str(t.last_qty),
+                                new=str(snap.total_qty),
+                            )
+                        )
 
                     if t.watch_sizes:
-                        watched, prev, curr = set(t.watch_sizes), set(t.last_sizes or []), set(snap.sizes)
+                        watched, prev, curr = (
+                            set(t.watch_sizes),
+                            set(t.last_sizes or []),
+                            set(snap.sizes),
+                        )
                         appeared = sorted(watched & curr - prev)
                         gone = sorted(watched & prev - curr)
                         if appeared:
-                            events.append(_msg("sizes_appeared", sizes=", ".join(appeared)))
+                            events.append(
+                                _msg("sizes_appeared", sizes=", ".join(appeared))
+                            )
                         if gone:
                             events.append(_msg("sizes_gone", sizes=", ".join(gone)))
 
@@ -107,8 +147,20 @@ async def run_cycle(
                         )
                         t.last_notified_at = now
 
-                    db_session.add(SnapshotModel(track_id=t.id, price_current=snap.price, in_stock=snap.in_stock, qty_current=snap.total_qty, sizes=snap.sizes))
+                    db_session.add(
+                        SnapshotModel(
+                            track_id=t.id,
+                            price_current=snap.price,
+                            rating_current=snap.rating,
+                            reviews_current=snap.reviews,
+                            in_stock=snap.in_stock,
+                            qty_current=snap.total_qty,
+                            sizes=snap.sizes,
+                        )
+                    )
                     t.last_price = snap.price
+                    t.last_rating = snap.rating
+                    t.last_reviews = snap.reviews
                     t.last_in_stock = snap.in_stock
                     t.last_qty = snap.total_qty
                     t.last_sizes = snap.sizes
@@ -124,11 +176,17 @@ async def run_cycle(
                         try:
                             await bot.send_message(
                                 user_tg_id,
-                                _msg("paused_error", id=str(track_id), title=track_title),
-                                link_preview_options=LinkPreviewOptions(is_disabled=True),
+                                _msg(
+                                    "paused_error", id=str(track_id), title=track_title
+                                ),
+                                link_preview_options=LinkPreviewOptions(
+                                    is_disabled=True
+                                ),
                             )
                         except Exception:
-                            logger.exception("WB monitor pause notify failed (track_id=%s)", track_id)
+                            logger.exception(
+                                "WB monitor pause notify failed (track_id=%s)", track_id
+                            )
 
         await db_session.commit()
 
@@ -149,7 +207,9 @@ async def start_worker(
                 started = datetime.now(UTC)
                 try:
                     await run_cycle(db_pool=db_pool, redis=redis, bot=bot, session=http)
-                    await WorkerStateRD.set_cycle_duration(redis, (datetime.now(UTC) - started).total_seconds())
+                    await WorkerStateRD.set_cycle_duration(
+                        redis, (datetime.now(UTC) - started).total_seconds()
+                    )
                 except Exception:
                     logger.exception("WB monitor cycle failed")
 
@@ -157,7 +217,9 @@ async def start_worker(
                     now_naive = datetime.now(UTC).replace(tzinfo=None)
                     if last_expiry_check != now_naive.date():
                         async with db_pool() as db_session, db_session.begin():
-                            expired = await expire_pro_users(db_session, now_naive, redis=redis)
+                            expired = await expire_pro_users(
+                                db_session, now_naive, redis=redis
+                            )
                         if expired:
                             logger.info("Expired %s pro users", expired)
                         last_expiry_check = now_naive.date()

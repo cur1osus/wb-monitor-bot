@@ -28,22 +28,32 @@ class MonitorUserModel(Base):
     username: Mapped[str | None] = mapped_column(String(255), nullable=True)
     plan: Mapped[str] = mapped_column(String(16), default="free")
     pro_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    referral_code: Mapped[str | None] = mapped_column(String(32), unique=True, index=True, nullable=True)
-    referred_by_tg_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
-    referral_bonus_granted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    referral_code: Mapped[str | None] = mapped_column(
+        String(32), unique=True, index=True, nullable=True
+    )
+    referred_by_tg_user_id: Mapped[int | None] = mapped_column(
+        BigInteger, nullable=True, index=True
+    )
+    referral_bonus_granted_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
         default=lambda: datetime.now(UTC).replace(tzinfo=None),
     )
 
-    tracks: Mapped[list[TrackModel]] = relationship(back_populates="user", cascade="all,delete-orphan")
+    tracks: Mapped[list[TrackModel]] = relationship(
+        back_populates="user", cascade="all,delete-orphan"
+    )
 
 
 class TrackModel(Base):
     __tablename__ = "monitor_tracks"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("monitor_users.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("monitor_users.id", ondelete="CASCADE"), index=True
+    )
     wb_item_id: Mapped[int] = mapped_column(BigInteger, index=True)
     url: Mapped[str] = mapped_column(Text)
     title: Mapped[str] = mapped_column(Text)
@@ -61,6 +71,8 @@ class TrackModel(Base):
     error_count: Mapped[int] = mapped_column(Integer, default=0)
 
     last_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    last_rating: Mapped[Decimal | None] = mapped_column(Numeric(3, 2), nullable=True)
+    last_reviews: Mapped[int | None] = mapped_column(Integer, nullable=True)
     last_in_stock: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     last_qty: Mapped[int | None] = mapped_column(Integer, nullable=True)
     last_sizes: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
@@ -73,16 +85,22 @@ class TrackModel(Base):
     )
 
     user: Mapped[MonitorUserModel] = relationship(back_populates="tracks")
-    snapshots: Mapped[list[SnapshotModel]] = relationship(back_populates="track", cascade="all,delete-orphan")
+    snapshots: Mapped[list[SnapshotModel]] = relationship(
+        back_populates="track", cascade="all,delete-orphan"
+    )
 
 
 class SnapshotModel(Base):
     __tablename__ = "monitor_snapshots"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    track_id: Mapped[int] = mapped_column(ForeignKey("monitor_tracks.id", ondelete="CASCADE"), index=True)
+    track_id: Mapped[int] = mapped_column(
+        ForeignKey("monitor_tracks.id", ondelete="CASCADE"), index=True
+    )
 
     price_current: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    rating_current: Mapped[Decimal | None] = mapped_column(Numeric(3, 2), nullable=True)
+    reviews_current: Mapped[int | None] = mapped_column(Integer, nullable=True)
     in_stock: Mapped[bool] = mapped_column(Boolean)
     sizes: Mapped[list[str]] = mapped_column(JSONB, default=list)
     qty_current: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -97,10 +115,14 @@ class SnapshotModel(Base):
 
 class AlertLogModel(Base):
     __tablename__ = "monitor_alerts_log"
-    __table_args__ = (UniqueConstraint("event_hash", name="uq_monitor_alert_event_hash"),)
+    __table_args__ = (
+        UniqueConstraint("event_hash", name="uq_monitor_alert_event_hash"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    track_id: Mapped[int] = mapped_column(ForeignKey("monitor_tracks.id", ondelete="CASCADE"), index=True)
+    track_id: Mapped[int] = mapped_column(
+        ForeignKey("monitor_tracks.id", ondelete="CASCADE"), index=True
+    )
     event_type: Mapped[str] = mapped_column(String(32), index=True)
     event_hash: Mapped[str] = mapped_column(String(128), nullable=False)
     sent_at: Mapped[datetime] = mapped_column(
@@ -114,8 +136,12 @@ class ReferralRewardModel(Base):
     __tablename__ = "monitor_referral_rewards"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    referrer_user_id: Mapped[int] = mapped_column(ForeignKey("monitor_users.id", ondelete="CASCADE"), index=True)
-    invited_user_id: Mapped[int] = mapped_column(ForeignKey("monitor_users.id", ondelete="CASCADE"), index=True)
+    referrer_user_id: Mapped[int] = mapped_column(
+        ForeignKey("monitor_users.id", ondelete="CASCADE"), index=True
+    )
+    invited_user_id: Mapped[int] = mapped_column(
+        ForeignKey("monitor_users.id", ondelete="CASCADE"), index=True
+    )
     invited_tg_user_id: Mapped[int] = mapped_column(BigInteger, index=True)
     payment_charge_id: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     rewarded_days: Mapped[int] = mapped_column(Integer, default=7)

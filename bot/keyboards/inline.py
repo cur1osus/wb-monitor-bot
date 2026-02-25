@@ -92,6 +92,11 @@ def format_track_text(track: TrackModel) -> str:
     current_price = (
         f"<b>{track.last_price} ₽</b>" if track.last_price is not None else "—"
     )
+    rating = (
+        f"{track.last_rating:.1f} ({track.last_reviews or 0} отзывов)"
+        if track.last_rating is not None
+        else "—"
+    )
     target_price = f"{track.target_price} ₽" if track.target_price is not None else "—"
     drop = (
         f"{track.target_drop_percent}%"
@@ -109,6 +114,7 @@ def format_track_text(track: TrackModel) -> str:
         f"<blockquote>Цены из API — без персональных скидок и кошелька WB</blockquote>\n\n"
         f"🔹 Артикул: <code>{track.wb_item_id}</code>\n"
         f"💰 Текущая цена: {current_price}\n"
+        f"⭐ Рейтинг: {rating}\n"
         f"🏪 В наличии: {in_stock}\n"
         f"📊 Остаток: {qty} шт\n"
         f"🎯 Цель цены: {target_price}\n"

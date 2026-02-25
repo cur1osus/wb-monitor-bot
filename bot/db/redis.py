@@ -112,6 +112,8 @@ class WbItemCacheRD(_RDBase):
     wb_item_id: int
     title: str | None = None
     price: str | None = None  # строковый Decimal для точности
+    rating: str | None = None
+    reviews: int | None = None
     in_stock: bool = False
     total_qty: int | None = None
     sizes: list[str] = []

@@ -218,6 +218,8 @@ async def create_track(
     in_stock: bool,
     qty: int | None,
     sizes: list[str],
+    rating: Decimal | None,
+    reviews: int | None,
     check_interval_min: int,
 ) -> TrackModel:
     track = TrackModel(
@@ -228,6 +230,8 @@ async def create_track(
         check_interval_min=check_interval_min,
         watch_qty=False,
         last_price=price,
+        last_rating=rating,
+        last_reviews=reviews,
         last_in_stock=in_stock,
         last_qty=qty,
         last_sizes=sizes,
@@ -240,6 +244,8 @@ async def create_track(
         SnapshotModel(
             track_id=track.id,
             price_current=price,
+            rating_current=rating,
+            reviews_current=reviews,
             in_stock=in_stock,
             qty_current=qty,
             sizes=sizes,
