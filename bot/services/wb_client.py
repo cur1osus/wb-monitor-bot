@@ -104,17 +104,23 @@ _ECOSYSTEM_TOKENS: dict[str, set[str]] = {
     "xiaomi": {"xiaomi", "redmi", "miband"},
     "samsung": {"samsung", "galaxy"},
     "huawei": {"huawei", "honor"},
+    "yandex": {"yandex", "яндекс", "yndx", "alice", "алиса", "станция"},
 }
 _TYPE_TOKENS = {
     "cable",
     "charge",
     "adapter",
+    "power",
+    "supply",
+    "battery",
+    "station",
     "remeshok",
     "strap",
     "case",
     "cover",
     "glass",
 }
+_MODEL_TOKEN_RE = re.compile(r"\b[a-z0-9]{2,}(?:-[a-z0-9]{2,})+\b", re.IGNORECASE)
 _TOKEN_NORMALIZATION = {
     "часы": "watch",
     "часов": "watch",
@@ -138,8 +144,16 @@ _TOKEN_NORMALIZATION = {
     "зарядное": "charge",
     "зарядные": "charge",
     "зарядный": "charge",
+    "блок": "power",
+    "питание": "power",
+    "питания": "power",
+    "адаптер": "adapter",
+    "аккумулятор": "battery",
+    "станция": "station",
+    "яндекс": "yandex",
     "charger": "charge",
     "charging": "charge",
+    "remeshok": "strap",
     "ремешок": "strap",
 }
 _MENU_CACHE_TTL_SEC = 6 * 60 * 60
@@ -269,7 +283,28 @@ def _build_search_query(title: str) -> str:
     tokens = _tokenize(title)
     if not tokens:
         return title.strip()[:80]
-    return " ".join(tokens[:5])
+
+    model_tokens = sorted(_extract_model_tokens(title))
+    if model_tokens:
+        return " ".join((tokens + model_tokens)[:8])
+    return " ".join(tokens[:6])
+
+
+def _extract_model_tokens(text: str) -> set[str]:
+    return {m.group(0).lower() for m in _MODEL_TOKEN_RE.finditer(text or "")}
+
+
+def _model_tokens_compatible(
+    base_model_tokens: set[str], candidate_text: str, candidate_tokens: set[str]
+) -> bool:
+    if not base_model_tokens:
+        return True
+
+    candidate_model_tokens = _extract_model_tokens(candidate_text)
+    if any(token in candidate_model_tokens for token in base_model_tokens):
+        return True
+
+    return any(token in candidate_tokens for token in base_model_tokens)
 
 
 def _is_male_token(token: str) -> bool:
@@ -536,6 +571,7 @@ async def _search_similar_all_sources(
     base_text = f"{base_title} {base_entity or ''}"
     base_gender = _detect_gender(base_text)
     base_tokens = _characteristic_tokens(base_text)
+    base_model_tokens = _extract_model_tokens(base_text)
     if not base_tokens:
         return []
     raw_brand_tokens = set(_tokenize(base_brand or ""))
@@ -576,6 +612,7 @@ async def _search_similar_all_sources(
             base_brand_tokens=base_brand_tokens,
             base_anchor_tokens=base_anchor_tokens,
             base_type_tokens=base_type_tokens,
+            base_model_tokens=base_model_tokens,
             required_anchor_matches=required_anchor_matches_for_pass,
             base_ecosystem=base_ecosystem,
             base_subject_id=base_subject_id,
@@ -604,6 +641,7 @@ async def _search_similar_all_sources(
             base_brand_tokens=base_brand_tokens,
             base_anchor_tokens=base_anchor_tokens,
             base_type_tokens=base_type_tokens,
+            base_model_tokens=base_model_tokens,
             required_anchor_matches=required_anchor_matches_for_pass,
             base_ecosystem=base_ecosystem,
             base_subject_id=base_subject_id,
@@ -665,6 +703,7 @@ async def _search_similar_with_search(
     base_brand_tokens: set[str],
     base_anchor_tokens: set[str],
     base_type_tokens: set[str],
+    base_model_tokens: set[str],
     required_anchor_matches: int,
     base_ecosystem: str | None,
     base_subject_id: int | None,
@@ -711,6 +750,16 @@ async def _search_similar_with_search(
                 if nm_id in seen_ids or nm_id == exclude_wb_item_id:
                     continue
 
+                if base_subject_id is not None:
+                    candidate_subject_id = _parse_int(
+                        product.get("subjectId") or product.get("subjectID")
+                    )
+                    if (
+                        candidate_subject_id is not None
+                        and candidate_subject_id != base_subject_id
+                    ):
+                        continue
+
                 price = _extract_price(product)
                 if price is None or price >= max_price:
                     continue
@@ -726,6 +775,12 @@ async def _search_similar_with_search(
 
                 candidate_tokens = _characteristic_tokens(candidate_text)
                 if not _is_ecosystem_compatible(base_ecosystem, candidate_tokens):
+                    continue
+                if not _model_tokens_compatible(
+                    base_model_tokens,
+                    candidate_text,
+                    candidate_tokens,
+                ):
                     continue
                 if base_brand_tokens:
                     candidate_brand_tokens = set(
@@ -855,6 +910,7 @@ async def _search_similar_with_catalog(
     base_brand_tokens: set[str],
     base_anchor_tokens: set[str],
     base_type_tokens: set[str],
+    base_model_tokens: set[str],
     required_anchor_matches: int,
     base_ecosystem: str | None,
     base_subject_id: int | None,
@@ -914,6 +970,16 @@ async def _search_similar_with_catalog(
                 if nm_id in seen_ids or nm_id == exclude_wb_item_id:
                     continue
 
+                if base_subject_id is not None:
+                    candidate_subject_id = _parse_int(
+                        product.get("subjectId") or product.get("subjectID")
+                    )
+                    if (
+                        candidate_subject_id is not None
+                        and candidate_subject_id != base_subject_id
+                    ):
+                        continue
+
                 price = _extract_price(product)
                 if price is None or price >= max_price:
                     continue
@@ -929,6 +995,12 @@ async def _search_similar_with_catalog(
 
                 candidate_tokens = _characteristic_tokens(candidate_text)
                 if not _is_ecosystem_compatible(base_ecosystem, candidate_tokens):
+                    continue
+                if not _model_tokens_compatible(
+                    base_model_tokens,
+                    candidate_text,
+                    candidate_tokens,
+                ):
                     continue
                 if base_brand_tokens:
                     candidate_brand_tokens = set(
