@@ -618,6 +618,22 @@ async def wb_reviews_analysis_cb(
             ]
         ]
     )
+
+    product = await fetch_product(redis, track.wb_item_id)
+    reviews_count: int | None = None
+    if product is not None and product.reviews is not None:
+        reviews_count = int(product.reviews)
+    elif track.last_reviews is not None:
+        reviews_count = int(track.last_reviews)
+
+    if reviews_count is not None and reviews_count <= 0:
+        await cb.answer()
+        await cb.message.edit_text(
+            tx.REVIEWS_ANALYSIS_NO_REVIEWS,
+            reply_markup=back_kb,
+        )
+        return
+
     model_signature = ",".join(
         [
             se.groq_model.strip(),
