@@ -68,19 +68,11 @@ def dashboard_kb(is_admin: bool) -> InlineKeyboardMarkup:
             _btn(tx.BTN_HELP, "wbm:help:0"),
         ],
     ]
-    if is_admin:
-        rows.append(
-            [
-                _btn(tx.BTN_ADMIN, "wbm:admin:0"),
-            ]
-        )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def back_to_dashboard_kb(is_admin: bool) -> InlineKeyboardMarkup:
     rows = [[_btn(tx.BTN_BACK_MENU, "wbm:home:0")]]
-    if is_admin:
-        rows.append([_btn(tx.BTN_ADMIN, "wbm:admin:0")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
