@@ -68,6 +68,7 @@ from bot.services.review_analysis import (
     ReviewAnalysisRateLimitError,
     analyze_reviews_with_llm,
 )
+from bot.services.cheap_ai import rerank_similar_with_llm
 from bot.services.utils import is_admin
 from bot.services.wb_client import (
     extract_wb_item_id,
@@ -548,8 +549,20 @@ async def wb_find_cheaper_cb(
             match_percent_threshold=cfg.cheap_match_percent,
             max_price=current.price,
             exclude_wb_item_id=track.wb_item_id,
+            limit=12,
+        )
+
+        primary_model = (cfg.analysis_model or "").strip() or se.agentplatform_model.strip()
+        reranked = await rerank_similar_with_llm(
+            api_key=se.agentplatform_api_key,
+            model=primary_model,
+            api_base_url=se.agentplatform_base_url,
+            base_title=current.title or track.title,
+            base_price=str(current.price),
+            candidates=found,
             limit=5,
         )
+
         alternatives = [
             WbSimilarItemRD(
                 wb_item_id=item.wb_item_id,
@@ -557,7 +570,7 @@ async def wb_find_cheaper_cb(
                 price=str(item.price),
                 url=item.url,
             )
-            for item in found
+            for item in reranked
         ]
         current_price_text = str(current.price)
         await WbSimilarSearchCacheRD(
