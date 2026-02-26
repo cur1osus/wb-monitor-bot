@@ -552,6 +552,21 @@ async def wb_find_cheaper_cb(
             limit=12,
         )
 
+        # Soft fallback: if strict matching returned nothing,
+        # retry with lower similarity and without subject lock.
+        if not found:
+            fallback_threshold = max(15, int(cfg.cheap_match_percent) - 20)
+            found = await search_similar_cheaper(
+                base_title=current.title or track.title,
+                base_entity=current.entity,
+                base_brand=current.brand,
+                base_subject_id=None,
+                match_percent_threshold=fallback_threshold,
+                max_price=current.price,
+                exclude_wb_item_id=track.wb_item_id,
+                limit=12,
+            )
+
         primary_model = (cfg.analysis_model or "").strip() or se.agentplatform_model.strip()
         reranked = await rerank_similar_with_llm(
             api_key=se.agentplatform_api_key,
