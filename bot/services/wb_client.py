@@ -427,9 +427,25 @@ async def _get_json_with_retries(
     return None
 
 
+def _is_cyrillic_token(token: str) -> bool:
+    return bool(_CYRILLIC_RE.search(token))
+
+
 def _tokens_match(left: str, right: str) -> bool:
     if left == right:
         return True
+
+    # Prefix matching is useful for latin/model tokens (yndx-00051, usbc, etc.)
+    # but too noisy for short cyrillic stems (e.g. "маркер" vs "маркиратор").
+    left_cyr = _is_cyrillic_token(left)
+    right_cyr = _is_cyrillic_token(right)
+
+    if left_cyr or right_cyr:
+        # For cyrillic tokens require longer shared prefix to reduce false positives.
+        if len(left) >= 6 and len(right) >= 6 and left[:6] == right[:6]:
+            return True
+        return False
+
     if len(left) >= 4 and len(right) >= 4 and left[:4] == right[:4]:
         return True
     return False
@@ -460,14 +476,9 @@ def _overlap_score(left: set[str], right: set[str] | frozenset[str]) -> int:
     score = 0
     for left_token in left:
         for right_token in right:
-            if left_token == right_token:
+            if _tokens_match(left_token, right_token):
                 score += 1
                 break
-            if len(left_token) >= 4 and len(right_token) >= 4:
-                prefix = 4
-                if left_token[:prefix] == right_token[:prefix]:
-                    score += 1
-                    break
     return score
 
 
