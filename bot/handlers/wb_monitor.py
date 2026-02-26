@@ -70,7 +70,6 @@ from bot.services.review_analysis import (
     ReviewAnalysisRateLimitError,
     analyze_reviews_with_llm,
 )
-from bot.services.cheap_ai import rerank_similar_with_llm
 from bot.services.utils import is_admin
 from bot.services.wb_client import (
     extract_wb_item_id,
@@ -604,16 +603,7 @@ async def wb_find_cheaper_cb(
                     limit=12,
                 )
 
-            primary_model = (cfg.analysis_model or "").strip() or se.agentplatform_model.strip()
-            reranked = await rerank_similar_with_llm(
-                api_key=se.agentplatform_api_key,
-                model=primary_model,
-                api_base_url=se.agentplatform_base_url,
-                base_title=current.title or track.title,
-                base_price=str(current.price),
-                candidates=found,
-                limit=5,
-            )
+            reranked = found[:5]
         finally:
             await _stop_spinner(spinner_task)
 
