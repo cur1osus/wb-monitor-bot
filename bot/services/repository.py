@@ -40,6 +40,8 @@ class AdminStats:
     new_tracks: int
     checks_count: int
     alerts_count: int
+    cheap_scans_count: int
+    reviews_scans_count: int
 
 
 @dataclass(slots=True)
@@ -465,6 +467,25 @@ async def get_admin_stats(session: AsyncSession, *, days: int) -> AdminStats:
         or 0
     )
 
+    cheap_scans_count = int(
+        await session.scalar(
+            select(func.count(AlertLogModel.id)).where(
+                AlertLogModel.sent_at >= since,
+                AlertLogModel.event_type == "cheap_scan",
+            )
+        )
+        or 0
+    )
+    reviews_scans_count = int(
+        await session.scalar(
+            select(func.count(AlertLogModel.id)).where(
+                AlertLogModel.sent_at >= since,
+                AlertLogModel.event_type == "reviews_scan",
+            )
+        )
+        or 0
+    )
+
     return AdminStats(
         days=days,
         total_users=total_users,
@@ -475,4 +496,6 @@ async def get_admin_stats(session: AsyncSession, *, days: int) -> AdminStats:
         new_tracks=new_tracks,
         checks_count=checks_count,
         alerts_count=alerts_count,
+        cheap_scans_count=cheap_scans_count,
+        reviews_scans_count=reviews_scans_count,
     )

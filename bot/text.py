@@ -366,8 +366,11 @@ def review_insights_text(track_title: str, insights: "ReviewInsights") -> str:
 
 
 def admin_stats_text(stats: object) -> str:
+    days = int(getattr(stats, "days"))
+    days_word = "день" if days == 1 else ("дня" if days in {2, 3, 4} else "дней")
     return ADMIN_STATS_TEXT.format(
-        days=getattr(stats, "days"),
+        days=days,
+        days_word=days_word,
         total_users=getattr(stats, "total_users"),
         new_users=getattr(stats, "new_users"),
         pro_users=getattr(stats, "pro_users"),
@@ -376,6 +379,8 @@ def admin_stats_text(stats: object) -> str:
         new_tracks=getattr(stats, "new_tracks"),
         checks_count=getattr(stats, "checks_count"),
         alerts_count=getattr(stats, "alerts_count"),
+        cheap_scans_count=getattr(stats, "cheap_scans_count", 0),
+        reviews_scans_count=getattr(stats, "reviews_scans_count", 0),
     )
 
 

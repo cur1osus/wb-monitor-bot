@@ -62,6 +62,7 @@ from bot.services.repository import (
     runtime_config_view,
     apply_runtime_intervals,
     set_user_tracks_interval,
+    log_event,
 )
 from bot.services.review_analysis import (
     ReviewAnalysisConfigError,
@@ -561,6 +562,9 @@ async def wb_find_cheaper_cb(
             )
             return
 
+        await log_event(session, track.id, "cheap_scan", f"cheap:{track.id}:{cb.from_user.id}")
+        await session.commit()
+
         await cb.answer(tx.FIND_CHEAPER_ANSWER)
         progress_text = tx.FIND_CHEAPER_PROGRESS.format(title=escape(track.title))
         spinner_task = asyncio.create_task(
@@ -738,6 +742,9 @@ async def wb_reviews_analysis_cb(
                     show_alert=True,
                 )
                 return
+
+            await log_event(session, track.id, "reviews_scan", f"reviews:{track.id}:{cb.from_user.id}")
+            await session.commit()
 
             await cb.answer(tx.REVIEWS_ANALYSIS_ANSWER)
             progress_text = tx.REVIEWS_ANALYSIS_PROGRESS.format(
@@ -1301,7 +1308,7 @@ async def wb_admin_stats_cb(
     await state.clear()
 
     days = int(cb.data.split(":")[3])
-    if days not in {7, 14, 30}:
+    if days not in {1, 7, 14, 30}:
         await cb.answer(tx.ADMIN_INVALID_PERIOD, show_alert=True)
         return
 

@@ -256,6 +256,7 @@ def admin_panel_kb(selected_days: int | None = None) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
+                _btn(_label(1), "wbm:admin:stats:1"),
                 _btn(_label(7), "wbm:admin:stats:7"),
                 _btn(_label(14), "wbm:admin:stats:14"),
                 _btn(_label(30), "wbm:admin:stats:30"),
