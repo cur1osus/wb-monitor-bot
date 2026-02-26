@@ -401,7 +401,11 @@ async def log_event(
 
 async def get_admin_stats(session: AsyncSession, *, days: int) -> AdminStats:
     now = datetime.now(UTC).replace(tzinfo=None)
-    since = now - timedelta(days=days)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    # 1 день: только с 00:00 сегодняшнего дня.
+    # N дней: включая сегодня, с 00:00 (today - (N-1) days).
+    days_span = max(1, int(days))
+    since = today_start - timedelta(days=days_span - 1)
 
     total_users = int(
         await session.scalar(select(func.count(MonitorUserModel.id))) or 0
