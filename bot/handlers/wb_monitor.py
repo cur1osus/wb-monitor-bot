@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
+from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from html import escape
 from typing import TYPE_CHECKING
@@ -98,6 +100,35 @@ def _daily_feature_limit(plan: str, cfg: "RuntimeConfigView") -> int:
 
 def _format_review_insights_text(track_title: str, insights: ReviewInsights) -> str:
     return tx.review_insights_text(track_title, insights)
+
+
+async def _progress_spinner(
+    message: Message,
+    *,
+    base_text: str,
+    reply_markup: InlineKeyboardMarkup | None = None,
+) -> None:
+    frames = ("⏳", "⌛️")
+    idx = 0
+    while True:
+        try:
+            await message.edit_text(
+                f"{frames[idx % len(frames)]} {base_text}",
+                reply_markup=reply_markup,
+            )
+        except TelegramBadRequest as exc:
+            if "message is not modified" not in str(exc).lower():
+                raise
+        idx += 1
+        await asyncio.sleep(1.2)
+
+
+async def _stop_spinner(task: asyncio.Task[None] | None) -> None:
+    if task is None:
+        return
+    task.cancel()
+    with suppress(asyncio.CancelledError):
+        await task
 
 
 async def _track_kb_with_usage(
@@ -528,55 +559,58 @@ async def wb_find_cheaper_cb(
             return
 
         await cb.answer(tx.FIND_CHEAPER_ANSWER)
-        await cb.message.edit_text(
-            tx.FIND_CHEAPER_PROGRESS.format(title=escape(track.title)),
-            reply_markup=back_kb,
+        progress_text = tx.FIND_CHEAPER_PROGRESS.format(title=escape(track.title))
+        spinner_task = asyncio.create_task(
+            _progress_spinner(cb.message, base_text=progress_text, reply_markup=back_kb)
         )
 
-        current = await fetch_product(redis, track.wb_item_id, use_cache=False)
-        if not current or current.price is None:
-            await cb.message.edit_text(
-                tx.FIND_CHEAPER_PRICE_ERROR,
-                reply_markup=back_kb,
-            )
-            return
+        try:
+            current = await fetch_product(redis, track.wb_item_id, use_cache=False)
+            if not current or current.price is None:
+                await cb.message.edit_text(
+                    tx.FIND_CHEAPER_PRICE_ERROR,
+                    reply_markup=back_kb,
+                )
+                return
 
-        found = await search_similar_cheaper(
-            base_title=current.title or track.title,
-            base_entity=current.entity,
-            base_brand=current.brand,
-            base_subject_id=current.subject_id,
-            match_percent_threshold=cfg.cheap_match_percent,
-            max_price=current.price,
-            exclude_wb_item_id=track.wb_item_id,
-            limit=12,
-        )
-
-        # Soft fallback: if strict matching returned nothing,
-        # retry with lower similarity and without subject lock.
-        if not found:
-            fallback_threshold = max(15, int(cfg.cheap_match_percent) - 20)
             found = await search_similar_cheaper(
                 base_title=current.title or track.title,
                 base_entity=current.entity,
                 base_brand=current.brand,
-                base_subject_id=None,
-                match_percent_threshold=fallback_threshold,
+                base_subject_id=current.subject_id,
+                match_percent_threshold=cfg.cheap_match_percent,
                 max_price=current.price,
                 exclude_wb_item_id=track.wb_item_id,
                 limit=12,
             )
 
-        primary_model = (cfg.analysis_model or "").strip() or se.agentplatform_model.strip()
-        reranked = await rerank_similar_with_llm(
-            api_key=se.agentplatform_api_key,
-            model=primary_model,
-            api_base_url=se.agentplatform_base_url,
-            base_title=current.title or track.title,
-            base_price=str(current.price),
-            candidates=found,
-            limit=5,
-        )
+            # Soft fallback: if strict matching returned nothing,
+            # retry with lower similarity and without subject lock.
+            if not found:
+                fallback_threshold = max(15, int(cfg.cheap_match_percent) - 20)
+                found = await search_similar_cheaper(
+                    base_title=current.title or track.title,
+                    base_entity=current.entity,
+                    base_brand=current.brand,
+                    base_subject_id=None,
+                    match_percent_threshold=fallback_threshold,
+                    max_price=current.price,
+                    exclude_wb_item_id=track.wb_item_id,
+                    limit=12,
+                )
+
+            primary_model = (cfg.analysis_model or "").strip() or se.agentplatform_model.strip()
+            reranked = await rerank_similar_with_llm(
+                api_key=se.agentplatform_api_key,
+                model=primary_model,
+                api_base_url=se.agentplatform_base_url,
+                base_title=current.title or track.title,
+                base_price=str(current.price),
+                candidates=found,
+                limit=5,
+            )
+        finally:
+            await _stop_spinner(spinner_task)
 
         alternatives = [
             WbSimilarItemRD(
@@ -712,19 +746,24 @@ async def wb_reviews_analysis_cb(
                 return
 
             await cb.answer(tx.REVIEWS_ANALYSIS_ANSWER)
-            await cb.message.edit_text(
-                tx.REVIEWS_ANALYSIS_PROGRESS.format(title=escape(track.title)),
-                reply_markup=back_kb,
+            progress_text = tx.REVIEWS_ANALYSIS_PROGRESS.format(
+                title=escape(track.title)
+            )
+            spinner_task = asyncio.create_task(
+                _progress_spinner(cb.message, base_text=progress_text, reply_markup=back_kb)
             )
 
-            insights = await analyze_reviews_with_llm(
-                wb_item_id=track.wb_item_id,
-                product_title=track.title,
-                api_key=se.agentplatform_api_key,
-                model=primary_model,
-                api_base_url=se.agentplatform_base_url,
-                sample_limit_per_side=review_limit,
-            )
+            try:
+                insights = await analyze_reviews_with_llm(
+                    wb_item_id=track.wb_item_id,
+                    product_title=track.title,
+                    api_key=se.agentplatform_api_key,
+                    model=primary_model,
+                    api_base_url=se.agentplatform_base_url,
+                    sample_limit_per_side=review_limit,
+                )
+            finally:
+                await _stop_spinner(spinner_task)
             await WbReviewInsightsCacheRD(
                 wb_item_id=track.wb_item_id,
                 model_signature=model_signature,
