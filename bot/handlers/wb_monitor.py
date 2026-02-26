@@ -786,8 +786,26 @@ async def wb_find_cheaper_cb(
                     ]
                     found.sort(key=lambda p: p.price)
                     found = found[:12]
+                    logger.info(
+                        "WB_BROWSER_SIMILAR_FILTERED item=%s candidates=%s selected=%s",
+                        track.wb_item_id,
+                        len(browser_candidates),
+                        len(found),
+                    )
+                else:
+                    logger.warning(
+                        "WB_BROWSER_SIMILAR_NO_DATA item=%s mode=%s",
+                        track.wb_item_id,
+                        provider_mode,
+                    )
 
             if provider_mode == "api" or not found:
+                if provider_mode in {"browser", "auto"}:
+                    logger.info(
+                        "WB_SIMILAR_FALLBACK_TO_API item=%s mode=%s",
+                        track.wb_item_id,
+                        provider_mode,
+                    )
                 found = await search_similar_cheaper(
                     base_title=current.title or track.title,
                     base_entity=current.entity,
