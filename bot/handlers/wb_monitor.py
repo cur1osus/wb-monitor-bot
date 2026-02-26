@@ -108,19 +108,24 @@ async def _progress_spinner(
     base_text: str,
     reply_markup: InlineKeyboardMarkup | None = None,
 ) -> None:
-    frames = ("⏳", "⌛️")
+    hourglass_frames = ("⏳", "⌛️")
+    dots_frames = (".", "..", "...")
+    clean_base = base_text.rstrip(" .…")
+
     idx = 0
     while True:
+        dots = dots_frames[idx % len(dots_frames)]
+        hourglass = hourglass_frames[idx % len(hourglass_frames)]
         try:
             await message.edit_text(
-                f"{frames[idx % len(frames)]} {base_text}",
+                f"{clean_base}{dots} {hourglass}",
                 reply_markup=reply_markup,
             )
         except TelegramBadRequest as exc:
             if "message is not modified" not in str(exc).lower():
                 raise
         idx += 1
-        await asyncio.sleep(1.2)
+        await asyncio.sleep(1.1)
 
 
 async def _stop_spinner(task: asyncio.Task[None] | None) -> None:
