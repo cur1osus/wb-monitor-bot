@@ -689,43 +689,47 @@ async def search_similar_cheaper_via_web(
     return candidates[:limit]
 
 
-async def search_similar_cheaper(
+async def search_similar_cheaper_title_only(
     *,
     base_title: str,
     max_price: Decimal,
     exclude_wb_item_id: int,
-    base_entity: str | None = None,
-    base_brand: str | None = None,
-    base_subject_id: int | None = None,
     match_percent_threshold: int | None = None,
     limit: int = 5,
     session: ClientSession | None = None,
 ) -> list[WbSimilarProduct]:
+    base_tokens = _characteristic_tokens(base_title)
+    if not base_tokens:
+        return []
+
+    min_match_percent = _normalize_match_percent(match_percent_threshold)
+
+    async def run(s: ClientSession) -> list[WbSimilarProduct]:
+        return await _search_similar_with_search(
+            s,
+            base_title=base_title,
+            base_gender=None,
+            base_tokens=base_tokens,
+            base_brand_tokens=set(),
+            base_anchor_tokens=set(),
+            base_type_tokens=set(),
+            base_model_tokens=set(),
+            required_anchor_matches=0,
+            require_model_tokens=False,
+            base_ecosystem=None,
+            base_subject_id=None,
+            min_match_percent=min_match_percent,
+            enforce_gender=False,
+            max_price=max_price,
+            exclude_wb_item_id=exclude_wb_item_id,
+            limit=limit,
+            skip_ids=set(),
+        )
+
     if session is None:
         async with ClientSession(headers=WB_HTTP_HEADERS) as new_session:
-            return await _search_similar_all_sources(
-                new_session,
-                base_title=base_title,
-                max_price=max_price,
-                exclude_wb_item_id=exclude_wb_item_id,
-                base_entity=base_entity,
-                base_brand=base_brand,
-                base_subject_id=base_subject_id,
-                match_percent_threshold=match_percent_threshold,
-                limit=limit,
-            )
-
-    return await _search_similar_all_sources(
-        session,
-        base_title=base_title,
-        max_price=max_price,
-        exclude_wb_item_id=exclude_wb_item_id,
-        base_entity=base_entity,
-        base_brand=base_brand,
-        base_subject_id=base_subject_id,
-        match_percent_threshold=match_percent_threshold,
-        limit=limit,
-    )
+            return await run(new_session)
+    return await run(session)
 
 
 async def _search_similar_all_sources(

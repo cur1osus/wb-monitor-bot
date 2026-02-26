@@ -88,7 +88,7 @@ from bot.services.utils import is_admin
 from bot.services.wb_client import (
     extract_wb_item_id,
     fetch_product,
-    search_similar_cheaper,
+    search_similar_cheaper_title_only,
 )
 from bot.settings import se
 
@@ -721,31 +721,13 @@ async def wb_find_cheaper_cb(
                 )
                 return
 
-            found = await search_similar_cheaper(
+            found = await search_similar_cheaper_title_only(
                 base_title=current.title or track.title,
-                base_entity=current.entity,
-                base_brand=current.brand,
-                base_subject_id=current.subject_id,
                 match_percent_threshold=cfg.cheap_match_percent,
                 max_price=current.price,
                 exclude_wb_item_id=track.wb_item_id,
                 limit=12,
             )
-
-            # Soft fallback: if strict matching returned nothing,
-            # retry with lower similarity and without subject lock.
-            if not found:
-                fallback_threshold = max(15, int(cfg.cheap_match_percent) - 20)
-                found = await search_similar_cheaper(
-                    base_title=current.title or track.title,
-                    base_entity=current.entity,
-                    base_brand=current.brand,
-                    base_subject_id=None,
-                    match_percent_threshold=fallback_threshold,
-                    max_price=current.price,
-                    exclude_wb_item_id=track.wb_item_id,
-                    limit=12,
-                )
 
             reranked = found[:5]
         finally:
