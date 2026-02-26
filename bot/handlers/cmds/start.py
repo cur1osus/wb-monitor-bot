@@ -9,6 +9,7 @@ from aiogram.filters import CommandStart
 
 from bot.db.redis import MonitorUserRD
 from bot.keyboards.inline import dashboard_kb, dashboard_text
+from bot import text as tx
 from bot.services.repository import (
     bind_user_referrer_by_code,
     count_user_tracks,
@@ -86,4 +87,4 @@ async def start_cmd(
     )
 
     if referred:
-        await message.answer("✅ Вы подключены по реферальной ссылке.")
+        await message.answer(tx.START_REF_LINKED)

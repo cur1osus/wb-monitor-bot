@@ -28,6 +28,7 @@ from bot.db.redis import (
     WbSimilarItemRD,
     WbSimilarSearchCacheRD,
 )
+from bot import text as tx
 from bot.keyboards.inline import (
     add_item_prompt_kb,
     back_to_dashboard_kb,
@@ -86,32 +87,7 @@ _LIKELY_WB_INPUT_RE = re.compile(r"wildberries|wb\.ru|\d{6,15}", re.IGNORECASE)
 
 
 def _format_review_insights_text(track_title: str, insights: ReviewInsights) -> str:
-    lines = [
-        f"🧠 <b>Анализ отзывов</b> для <b>{escape(track_title)}</b>",
-        (
-            f"<blockquote>Развернутых отзывов: +{insights.positive_samples} "
-            f"/ -{insights.negative_samples}</blockquote>"
-        ),
-        "",
-        "✅ <b>Сильные качества:</b>",
-    ]
-
-    if insights.strengths:
-        for idx, item in enumerate(insights.strengths, start=1):
-            lines.append(f"{idx}. {escape(item)}")
-    else:
-        lines.append("1. Не удалось выделить по доступным отзывам.")
-
-    lines.append("")
-    lines.append("⚠️ <b>Слабые качества:</b>")
-
-    if insights.weaknesses:
-        for idx, item in enumerate(insights.weaknesses, start=1):
-            lines.append(f"{idx}. {escape(item)}")
-    else:
-        lines.append("Нет явных повторяющихся минусов в развернутых отзывах.")
-
-    return "\n".join(lines)
+    return tx.review_insights_text(track_title, insights)
 
 
 class SettingsState(StatesGroup):
@@ -150,7 +126,7 @@ async def wb_noop_cb(cb: CallbackQuery) -> None:
 @router.callback_query(F.data == "wbm:add:0")
 async def wb_add_cb(cb: CallbackQuery) -> None:
     await cb.message.edit_text(
-        "📎 Отправьте ссылку на товар Wildberries или его артикул (6-12 цифр).",
+        tx.ADD_ITEM_PROMPT,
         reply_markup=add_item_prompt_kb(),
     )
 
@@ -171,9 +147,7 @@ async def wb_add_item_from_text(
     wb_item_id = extract_wb_item_id(url_or_text)
 
     if not wb_item_id:
-        await msg.answer(
-            "❌ Не удалось распознать ссылку WB. Отправьте корректную ссылку."
-        )
+        await msg.answer(tx.WB_LINK_PARSE_ERROR)
         return
 
     user = await get_or_create_monitor_user(
@@ -188,18 +162,18 @@ async def wb_add_item_from_text(
         )
     )
     if existing:
-        await msg.answer("⚠️ Вы уже отслеживаете этот товар.")
+        await msg.answer(tx.TRACK_ALREADY_EXISTS)
         return
 
     track_count = await count_user_tracks(session, user.id, active_only=True)
     limit = 50 if user.plan == "pro" else 5
     if track_count >= limit:
-        await msg.answer(f"❌ Достигнут лимит треков ({limit}). Обновитесь до Pro!")
+        await msg.answer(tx.TRACK_LIMIT_REACHED.format(limit=limit))
         return
 
     product = await fetch_product(redis, wb_item_id)
     if not product:
-        await msg.answer("❌ Не удалось получить данные о товаре. Проверьте ссылку.")
+        await msg.answer(tx.PRODUCT_FETCH_ERROR)
         return
 
     cfg = runtime_config_view(await get_runtime_config(session))
@@ -225,21 +199,46 @@ async def wb_add_item_from_text(
     )
     await session.commit()
 
+    price_text = f"{product.price}₽" if product.price else tx.TRACK_ADDED_PRICE_UNKNOWN
+    rating_text = (
+        tx.TRACK_ADDED_RATING_WITH_REVIEWS.format(
+            rating=product.rating,
+            reviews=product.reviews or 0,
+        )
+        if product.rating is not None
+        else tx.TRACK_ADDED_RATING_UNKNOWN
+    )
+    in_stock_text = (
+        tx.TRACK_ADDED_IN_STOCK_YES if product.in_stock else tx.TRACK_ADDED_IN_STOCK_NO
+    )
+
     await msg.answer(
-        f"✅ Товар добавлен в отслеживание!\n\n"
-        f"📦 {product.title}\n"
-        f"💰 Цена: {f'{product.price}₽' if product.price else 'не указана'}\n"
-        f"⭐ Рейтинг: {f'{product.rating} ({product.reviews or 0} отзывов)' if product.rating is not None else 'не указан'}\n"
-        f"📦 В наличии: {'да' if product.in_stock else 'нет'}",
+        tx.TRACK_ADDED_TEMPLATE.format(
+            title=product.title,
+            price=price_text,
+            rating=rating_text,
+            in_stock=in_stock_text,
+        ),
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text="🔎 Найти дешевле", callback_data=f"wbm:cheap:{track.id}"
+                        text=tx.TRACK_ADDED_FIND_CHEAPER_BTN,
+                        callback_data=f"wbm:cheap:{track.id}",
                     )
                 ],
-                [InlineKeyboardButton(text="📦 Мои треки", callback_data="wbm:list:0")],
-                [InlineKeyboardButton(text="◀ В меню", callback_data="wbm:home:0")],
+                [
+                    InlineKeyboardButton(
+                        text=tx.TRACK_ADDED_MY_TRACKS_BTN,
+                        callback_data="wbm:list:0",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=tx.TRACK_ADDED_BACK_MENU_BTN,
+                        callback_data="wbm:home:0",
+                    )
+                ],
             ]
         ),
     )
@@ -252,7 +251,7 @@ async def wb_list_cb(cb: CallbackQuery, session: AsyncSession) -> None:
     )
     tracks = await get_user_tracks(session, user.id)
     if not tracks:
-        await cb.answer("У вас нет активных треков", show_alert=True)
+        await cb.answer(tx.NO_ACTIVE_TRACKS, show_alert=True)
         return
     track = tracks[0]
     await cb.message.edit_text(
@@ -268,7 +267,7 @@ async def wb_page_cb(cb: CallbackQuery, session: AsyncSession) -> None:
     )
     tracks = await get_user_tracks(session, user.id)
     if not tracks or page >= len(tracks):
-        await cb.answer("Недействительная страница", show_alert=True)
+        await cb.answer(tx.INVALID_PAGE, show_alert=True)
         return
     track = tracks[page]
     await cb.message.edit_text(
@@ -330,9 +329,9 @@ async def wb_remove_cb(cb: CallbackQuery, session: AsyncSession) -> None:
                     confirm_remove=True,
                 ),
             )
-            await cb.answer("Подтвердите удаление")
+            await cb.answer(tx.REMOVE_CONFIRM)
             return
-    await cb.answer("Трек не найден", show_alert=True)
+    await cb.answer(tx.TRACK_NOT_FOUND, show_alert=True)
 
 
 @router.callback_query(F.data.regexp(r"wbm:remove_no:(\d+)"))
@@ -348,9 +347,9 @@ async def wb_remove_no_cb(cb: CallbackQuery, session: AsyncSession) -> None:
                 format_track_text(track),
                 reply_markup=paged_track_kb(track, idx, len(tracks)),
             )
-            await cb.answer("Удаление отменено")
+            await cb.answer(tx.REMOVE_CANCELLED)
             return
-    await cb.answer("Трек не найден", show_alert=True)
+    await cb.answer(tx.TRACK_NOT_FOUND, show_alert=True)
 
 
 @router.callback_query(F.data.regexp(r"wbm:remove_yes:(\d+)"))
@@ -372,7 +371,7 @@ async def wb_remove_yes_cb(cb: CallbackQuery, session: AsyncSession) -> None:
         ),
         reply_markup=dashboard_kb(is_admin(cb.from_user.id, se)),
     )
-    await cb.answer("Трек удален")
+    await cb.answer(tx.TRACK_DELETED)
 
 
 @router.callback_query(F.data.regexp(r"wbm:cheap:(\d+)"))
@@ -382,20 +381,25 @@ async def wb_find_cheaper_cb(
     track_id = int(cb.data.split(":")[2])
     track = await get_user_track_by_id(session, track_id)
     if not track:
-        await cb.answer("Трек не найден", show_alert=True)
+        await cb.answer(tx.TRACK_NOT_FOUND, show_alert=True)
         return
 
     back_kb = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ К моим товарам", callback_data="wbm:list:0")]
+            [
+                InlineKeyboardButton(
+                    text=tx.FIND_CHEAPER_TO_LIST_BTN,
+                    callback_data="wbm:list:0",
+                )
+            ]
         ]
     )
 
     await cb.message.edit_text(
-        f"🔎 Ищу похожие товары дешевле для <b>{escape(track.title)}</b>...",
+        tx.FIND_CHEAPER_PROGRESS.format(title=escape(track.title)),
         reply_markup=back_kb,
     )
-    await cb.answer("Ищу варианты...")
+    await cb.answer(tx.FIND_CHEAPER_ANSWER)
 
     cfg = runtime_config_view(await get_runtime_config(session))
     cached = await WbSimilarSearchCacheRD.get(redis, track.id)
@@ -403,7 +407,7 @@ async def wb_find_cheaper_cb(
         current = await fetch_product(redis, track.wb_item_id, use_cache=False)
         if not current or current.price is None:
             await cb.message.edit_text(
-                "❌ Не удалось получить текущую цену товара.",
+                tx.FIND_CHEAPER_PRICE_ERROR,
                 reply_markup=back_kb,
             )
             return
@@ -440,13 +444,19 @@ async def wb_find_cheaper_cb(
 
     if not alternatives:
         await cb.message.edit_text(
-            f"🔎 Для <b>{escape(track.title)}</b> не нашлось похожих товаров дешевле <b>{current_price_text} ₽</b>.",
+            tx.FIND_CHEAPER_EMPTY.format(
+                title=escape(track.title),
+                price=current_price_text,
+            ),
             reply_markup=back_kb,
         )
         return
 
     lines = [
-        f"🔎 Похожие товары дешевле <b>{current_price_text} ₽</b> для <b>{escape(track.title)}</b>",
+        tx.FIND_CHEAPER_HEADER.format(
+            price=current_price_text,
+            title=escape(track.title),
+        ),
         "",
     ]
     for idx, item in enumerate(alternatives, start=1):
@@ -454,7 +464,7 @@ async def wb_find_cheaper_cb(
             f'{idx}. <a href="{item.url}">{escape(item.title)}</a> — <b>{item.price} ₽</b>'
         )
     lines.append("")
-    lines.append("⚠️ Сверяйте характеристики перед покупкой.")
+    lines.append(tx.FIND_CHEAPER_TIP)
 
     await cb.message.edit_text(
         "\n".join(lines),
@@ -472,21 +482,22 @@ async def wb_reviews_analysis_cb(
     track_id = int(cb.data.split(":")[2])
     track = await get_user_track_by_id(session, track_id)
     if not track:
-        await cb.answer("Трек не найден", show_alert=True)
+        await cb.answer(tx.TRACK_NOT_FOUND, show_alert=True)
         return
 
-    await cb.answer("Анализирую отзывы...")
+    await cb.answer(tx.REVIEWS_ANALYSIS_ANSWER)
     back_kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="◀️ К товару", callback_data=f"wbm:back:{track.id}"
+                    text=tx.REVIEWS_BACK_TO_TRACK_BTN,
+                    callback_data=f"wbm:back:{track.id}",
                 )
             ]
         ]
     )
     await cb.message.edit_text(
-        f"🧠 Анализирую развернутые отзывы для <b>{escape(track.title)}</b>...",
+        tx.REVIEWS_ANALYSIS_PROGRESS.format(title=escape(track.title)),
         reply_markup=back_kb,
     )
 
@@ -539,7 +550,7 @@ async def wb_reviews_analysis_cb(
     except Exception:
         logger.exception("Unexpected error during reviews analysis")
         await cb.message.edit_text(
-            "❌ Не удалось выполнить анализ отзывов. Попробуйте позже.",
+            tx.REVIEWS_ANALYSIS_FAILED,
             reply_markup=back_kb,
         )
         return
@@ -558,10 +569,10 @@ async def wb_settings_cb(cb: CallbackQuery, session: AsyncSession) -> None:
         session, cb.from_user.id, cb.from_user.username
     )
     if not track:
-        await cb.answer("Трек не найден", show_alert=True)
+        await cb.answer(tx.TRACK_NOT_FOUND, show_alert=True)
         return
     await cb.message.edit_text(
-        format_track_text(track) + "\n\n⚙️ Настройки:",
+        format_track_text(track) + tx.SETTINGS_SUFFIX,
         reply_markup=settings_kb(
             track_id,
             has_sizes=bool(track.watch_sizes),
@@ -587,18 +598,16 @@ async def wb_plan_cb(cb: CallbackQuery, session: AsyncSession) -> None:
         if (is_pro and user.pro_expires_at)
         else None
     )
-    text = (
-        f"💳 <b>Ваш тариф: {user.plan.upper()}</b>\n\n"
-        f"📦 Треков: {used}/{limit}\n"
-        f"⏱ Интервал проверок: {interval} мин\n\n"
+    text = tx.PLAN_TEXT.format(
+        plan=user.plan.upper(),
+        used=used,
+        limit=limit,
+        interval=interval,
     )
     if is_pro:
-        text += "✅ Pro активен\n"
+        text += tx.PLAN_PRO_ACTIVE
     else:
-        text += (
-            "🚀 Обновитесь до <b>PRO</b> — 50 треков, "
-            f"проверка каждые {cfg.pro_interval_min} мин!"
-        )
+        text += tx.PLAN_PRO_UPSELL.format(interval=cfg.pro_interval_min)
 
     await cb.message.edit_text(text, reply_markup=plan_kb(is_pro, expires_str))
 
@@ -609,11 +618,11 @@ async def wb_pay_stars_cb(cb: CallbackQuery, session: AsyncSession) -> None:
 
     await get_or_create_monitor_user(session, cb.from_user.id, cb.from_user.username)
     await cb.message.answer_invoice(
-        title="WB Monitor Pro",
-        description="Доступ к Pro на 30 дней",
+        title=tx.PAYMENT_TITLE,
+        description=tx.PAYMENT_DESCRIPTION,
         payload="wbm_pro_30d",
         currency="XTR",
-        prices=[LabeledPrice(label="Pro (30 дней)", amount=150)],
+        prices=[LabeledPrice(label=tx.PAYMENT_LABEL, amount=150)],
         provider_token="",
     )
 
@@ -670,7 +679,8 @@ async def successful_payment_handler(
                 await MonitorUserRD.invalidate(redis, referrer.tg_user_id)
                 try:
                     await msg.bot.send_message(
-                        referrer.tg_user_id, "🎉 По рефералке начислено +7 дней Pro!"
+                        referrer.tg_user_id,
+                        tx.REFERRAL_REWARD_NOTIFY,
                     )
                 except Exception:
                     pass
@@ -680,9 +690,9 @@ async def successful_payment_handler(
     # Инвалидируем кэш текущего пользователя (план изменился)
     await MonitorUserRD.invalidate(redis, msg.from_user.id)
 
-    text = "✅ Pro активирован. Доступ продлен на 30 дней."
+    text = tx.PRO_ACTIVATED
     if referral_bonus_applied:
-        text += "\n🎁 Реферальный бонус пригласившему (+7 дней) начислен."
+        text += tx.PRO_ACTIVATED_WITH_REFERRAL
     await msg.answer(text)
 
 
@@ -695,7 +705,7 @@ async def wb_ref_cb(cb: CallbackQuery, session: AsyncSession) -> None:
     bot_me = await cb.bot.me()
     ref_link = f"https://t.me/{bot_me.username}?start=ref_{user.referral_code}"
     await cb.message.edit_text(
-        f"👥 <b>Реферальная программа</b>\n\nПриглашайте друзей и получайте <b>+7 дней Pro</b> за каждую оплату!\n\nВаша ссылка:\n<code>{ref_link}</code>",
+        tx.REFERRAL_TEXT.format(ref_link=ref_link),
         reply_markup=ref_kb(ref_link),
     )
 
@@ -703,7 +713,7 @@ async def wb_ref_cb(cb: CallbackQuery, session: AsyncSession) -> None:
 @router.callback_query(F.data == "wbm:help:0")
 async def wb_help_cb(cb: CallbackQuery) -> None:
     await cb.message.edit_text(
-        "❓ <b>Помощь WB Monitor</b>\n\n/start - Главное меню\n\nБот отслеживает цены и наличие товаров на Wildberries.\nПросто отправьте ссылку на товар или его артикул.",
+        tx.HELP_TEXT,
         reply_markup=back_to_dashboard_kb(is_admin(cb.from_user.id, se)),
     )
 
@@ -713,7 +723,7 @@ async def wb_admin_cb(
     cb: CallbackQuery, session: AsyncSession, state: FSMContext
 ) -> None:
     if not is_admin(cb.from_user.id, se):
-        await cb.answer("❌ Нет доступа", show_alert=True)
+        await cb.answer(tx.NO_ACCESS, show_alert=True)
         return
 
     await state.clear()
@@ -726,25 +736,11 @@ async def wb_admin_cb(
 
 
 def _admin_stats_text(stats: "AdminStats") -> str:
-    return (
-        f"🛠 <b>Админ панель</b>\n"
-        f"Период: <b>{stats.days} дней</b>\n\n"
-        f"👥 Пользователи: <b>{stats.total_users}</b> (новых: +{stats.new_users})\n"
-        f"⭐ PRO активных: <b>{stats.pro_users}</b>\n"
-        f"📦 Треки: <b>{stats.total_tracks}</b> (активных: {stats.active_tracks}, новых: +{stats.new_tracks})\n"
-        f"🔁 Проверок (snapshots): <b>{stats.checks_count}</b>\n"
-        f"🔔 Уведомлений: <b>{stats.alerts_count}</b>"
-    )
+    return tx.admin_stats_text(stats)
 
 
 def _admin_runtime_config_text(cfg: "RuntimeConfigView") -> str:
-    return (
-        "⚙️ <b>Настройки бота</b>\n\n"
-        f"🆓 FREE интервал: <b>{cfg.free_interval_min} мин</b>\n"
-        f"⭐ PRO интервал: <b>{cfg.pro_interval_min} мин</b>\n"
-        f"🔎 Порог похожести: <b>{cfg.cheap_match_percent}%</b>\n\n"
-        "Изменения применяются сразу."
-    )
+    return tx.admin_runtime_config_text(cfg)
 
 
 @router.callback_query(F.data == "wbm:admin:cfg")
@@ -752,7 +748,7 @@ async def wb_admin_cfg_cb(
     cb: CallbackQuery, session: AsyncSession, state: FSMContext
 ) -> None:
     if not is_admin(cb.from_user.id, se):
-        await cb.answer("❌ Нет доступа", show_alert=True)
+        await cb.answer(tx.NO_ACCESS, show_alert=True)
         return
 
     await state.clear()
@@ -766,12 +762,12 @@ async def wb_admin_cfg_cb(
 @router.callback_query(F.data == "wbm:admin:cfg:free")
 async def wb_admin_cfg_free_cb(cb: CallbackQuery, state: FSMContext) -> None:
     if not is_admin(cb.from_user.id, se):
-        await cb.answer("❌ Нет доступа", show_alert=True)
+        await cb.answer(tx.NO_ACCESS, show_alert=True)
         return
 
     await state.set_state(SettingsState.waiting_for_free_interval)
     await cb.message.edit_text(
-        "🆓 Введите новый интервал FREE в минутах (от 5 до 1440):",
+        tx.ADMIN_FREE_PROMPT,
         reply_markup=admin_config_input_kb(),
     )
 
@@ -779,12 +775,12 @@ async def wb_admin_cfg_free_cb(cb: CallbackQuery, state: FSMContext) -> None:
 @router.callback_query(F.data == "wbm:admin:cfg:pro")
 async def wb_admin_cfg_pro_cb(cb: CallbackQuery, state: FSMContext) -> None:
     if not is_admin(cb.from_user.id, se):
-        await cb.answer("❌ Нет доступа", show_alert=True)
+        await cb.answer(tx.NO_ACCESS, show_alert=True)
         return
 
     await state.set_state(SettingsState.waiting_for_pro_interval)
     await cb.message.edit_text(
-        "⭐ Введите новый интервал PRO в минутах (от 1 до 1440):",
+        tx.ADMIN_PRO_PROMPT,
         reply_markup=admin_config_input_kb(),
     )
 
@@ -792,12 +788,12 @@ async def wb_admin_cfg_pro_cb(cb: CallbackQuery, state: FSMContext) -> None:
 @router.callback_query(F.data == "wbm:admin:cfg:cheap")
 async def wb_admin_cfg_cheap_cb(cb: CallbackQuery, state: FSMContext) -> None:
     if not is_admin(cb.from_user.id, se):
-        await cb.answer("❌ Нет доступа", show_alert=True)
+        await cb.answer(tx.NO_ACCESS, show_alert=True)
         return
 
     await state.set_state(SettingsState.waiting_for_cheap_threshold)
     await cb.message.edit_text(
-        "🔎 Введите порог похожести для поиска дешевле (от 10 до 95):",
+        tx.ADMIN_CHEAP_PROMPT,
         reply_markup=admin_config_input_kb(),
     )
 
@@ -813,10 +809,10 @@ async def wb_admin_cfg_free_msg(
     try:
         value = int(msg.text.strip())
     except ValueError:
-        await msg.answer("❌ Введите целое число от 5 до 1440.")
+        await msg.answer(tx.ADMIN_FREE_INT_ERROR)
         return
     if value < 5 or value > 1440:
-        await msg.answer("❌ Значение вне диапазона: 5..1440")
+        await msg.answer(tx.ADMIN_FREE_RANGE_ERROR)
         return
 
     cfg = await get_runtime_config(session)
@@ -847,10 +843,10 @@ async def wb_admin_cfg_pro_msg(
     try:
         value = int(msg.text.strip())
     except ValueError:
-        await msg.answer("❌ Введите целое число от 1 до 1440.")
+        await msg.answer(tx.ADMIN_PRO_INT_ERROR)
         return
     if value < 1 or value > 1440:
-        await msg.answer("❌ Значение вне диапазона: 1..1440")
+        await msg.answer(tx.ADMIN_PRO_RANGE_ERROR)
         return
 
     cfg = await get_runtime_config(session)
@@ -881,10 +877,10 @@ async def wb_admin_cfg_cheap_msg(
     try:
         value = int(msg.text.strip())
     except ValueError:
-        await msg.answer("❌ Введите целое число от 10 до 95.")
+        await msg.answer(tx.ADMIN_CHEAP_INT_ERROR)
         return
     if value < 10 or value > 95:
-        await msg.answer("❌ Значение вне диапазона: 10..95")
+        await msg.answer(tx.ADMIN_CHEAP_RANGE_ERROR)
         return
 
     cfg = await get_runtime_config(session)
@@ -904,14 +900,14 @@ async def wb_admin_stats_cb(
     cb: CallbackQuery, session: AsyncSession, state: FSMContext
 ) -> None:
     if not is_admin(cb.from_user.id, se):
-        await cb.answer("❌ Нет доступа", show_alert=True)
+        await cb.answer(tx.NO_ACCESS, show_alert=True)
         return
 
     await state.clear()
 
     days = int(cb.data.split(":")[3])
     if days not in {7, 14, 30}:
-        await cb.answer("Недоступный период", show_alert=True)
+        await cb.answer(tx.ADMIN_INVALID_PERIOD, show_alert=True)
         return
 
     stats = await get_admin_stats(session, days=days)
@@ -924,16 +920,12 @@ async def wb_admin_stats_cb(
 @router.callback_query(F.data == "wbm:admin:grantpro")
 async def wb_admin_grant_pro_cb(cb: CallbackQuery, state: FSMContext) -> None:
     if not is_admin(cb.from_user.id, se):
-        await cb.answer("❌ Нет доступа", show_alert=True)
+        await cb.answer(tx.NO_ACCESS, show_alert=True)
         return
 
     await state.set_state(SettingsState.waiting_for_pro_grant)
     await cb.message.edit_text(
-        "🎁 <b>Выдать PRO</b>\n\n"
-        "Отправьте данные в формате:\n"
-        "<code>tg_id дни</code>\n\n"
-        "Пример:\n"
-        "<code>123456789 30</code>",
+        tx.ADMIN_GRANT_PRO_PROMPT,
         reply_markup=admin_grant_pro_kb(),
     )
 
@@ -970,7 +962,7 @@ async def wb_admin_grant_pro_msg(
     parsed = _parse_grant_pro_payload(msg.text.strip())
     if parsed is None:
         await msg.answer(
-            "❌ Неверный формат. Используйте: <code>tg_id дни</code> (дни от 1 до 365).",
+            tx.ADMIN_GRANT_PRO_FORMAT_ERROR,
             reply_markup=admin_grant_pro_kb(),
         )
         return
@@ -979,7 +971,7 @@ async def wb_admin_grant_pro_msg(
     user = await get_monitor_user_by_tg_id(session, tg_user_id)
     if not user:
         await msg.answer(
-            "❌ Пользователь не найден. Он должен хотя бы один раз запустить бота (/start).",
+            tx.ADMIN_GRANT_PRO_USER_NOT_FOUND,
             reply_markup=admin_grant_pro_kb(),
         )
         return
@@ -999,16 +991,21 @@ async def wb_admin_grant_pro_msg(
 
     await state.clear()
     await msg.answer(
-        f"✅ Пользователю <code>{user.tg_user_id}</code> выдан PRO на <b>{days}</b> дн.\n"
-        f"Действует до: <b>{user.pro_expires_at.strftime('%d.%m.%Y %H:%M')}</b>",
+        tx.ADMIN_GRANT_PRO_DONE.format(
+            tg_user_id=user.tg_user_id,
+            days=days,
+            expires=user.pro_expires_at.strftime("%d.%m.%Y %H:%M"),
+        ),
         reply_markup=admin_panel_kb(selected_days=7),
     )
 
     try:
         await msg.bot.send_message(
             user.tg_user_id,
-            f"🎉 Вам активирован PRO на <b>{days}</b> дн.\n"
-            f"Действует до: <b>{user.pro_expires_at.strftime('%d.%m.%Y %H:%M')}</b>",
+            tx.ADMIN_GRANT_PRO_USER_NOTIFY.format(
+                days=days,
+                expires=user.pro_expires_at.strftime("%d.%m.%Y %H:%M"),
+            ),
         )
     except Exception:
         pass
@@ -1079,13 +1076,14 @@ async def wb_settings_price_cb(cb: CallbackQuery, state: FSMContext) -> None:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="❌ Отмена", callback_data=f"wbm:settings:{track_id}"
+                    text=tx.SETTINGS_CANCEL_BTN,
+                    callback_data=f"wbm:settings:{track_id}",
                 )
             ]
         ]
     )
     await cb.message.edit_text(
-        "🎯 Введите желаемую цену (в рублях):\nНапример: 1500 или 1500.50",
+        tx.SETTINGS_PRICE_PROMPT,
         reply_markup=cancel_kb,
     )
 
@@ -1109,7 +1107,7 @@ async def wb_settings_price_msg(
         if new_price < 0:
             raise ValueError
     except ValueError:
-        await msg.answer("❌ Некорректная цена. Введите положительное число.")
+        await msg.answer(tx.SETTINGS_PRICE_ERROR)
         return
 
     track = await get_user_track_by_id(session, track_id)
@@ -1121,7 +1119,7 @@ async def wb_settings_price_msg(
         await session.commit()
         await _hide_settings_prompt_keyboard(msg, state)
         await msg.answer(
-            f"✅ Целевая цена для <b>{track.title}</b> установлена: {new_price} ₽",
+            tx.SETTINGS_PRICE_DONE.format(title=track.title, price=new_price),
             reply_markup=settings_kb(
                 track_id,
                 has_sizes=bool(track.last_sizes),
@@ -1143,13 +1141,15 @@ async def wb_settings_drop_cb(cb: CallbackQuery, state: FSMContext) -> None:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="❌ Отмена", callback_data=f"wbm:settings:{track_id}"
+                    text=tx.SETTINGS_CANCEL_BTN,
+                    callback_data=f"wbm:settings:{track_id}",
                 )
             ]
         ]
     )
     await cb.message.edit_text(
-        "📉 Введите процент падения (например, 10 для 10%):", reply_markup=cancel_kb
+        tx.SETTINGS_DROP_PROMPT,
+        reply_markup=cancel_kb,
     )
 
 
@@ -1172,7 +1172,7 @@ async def wb_settings_drop_msg(
         if new_drop < 1 or new_drop > 99:
             raise ValueError
     except ValueError:
-        await msg.answer("❌ Некорректный процент. Введите число от 1 до 99.")
+        await msg.answer(tx.SETTINGS_DROP_ERROR)
         return
 
     track = await get_user_track_by_id(session, track_id)
@@ -1184,7 +1184,7 @@ async def wb_settings_drop_msg(
         await session.commit()
         await _hide_settings_prompt_keyboard(msg, state)
         await msg.answer(
-            f"✅ Уведомление о падении цены на {new_drop}% для <b>{track.title}</b> включено.",
+            tx.SETTINGS_DROP_DONE.format(drop=new_drop, title=track.title),
             reply_markup=settings_kb(
                 track_id,
                 has_sizes=bool(track.last_sizes),
@@ -1201,7 +1201,7 @@ async def wb_settings_price_reset_cb(cb: CallbackQuery, session: AsyncSession) -
     track_id = int(cb.data.split(":")[2])
     track = await get_user_track_by_id(session, track_id)
     if not track:
-        await cb.answer("Трек не найден", show_alert=True)
+        await cb.answer(tx.TRACK_NOT_FOUND, show_alert=True)
         return
 
     user = await get_or_create_monitor_user(
@@ -1211,7 +1211,7 @@ async def wb_settings_price_reset_cb(cb: CallbackQuery, session: AsyncSession) -
     await session.commit()
 
     await cb.message.edit_text(
-        format_track_text(track) + "\n\n⚙️ Настройки:",
+        format_track_text(track) + tx.SETTINGS_SUFFIX,
         reply_markup=settings_kb(
             track_id,
             has_sizes=bool(track.last_sizes),
@@ -1219,7 +1219,7 @@ async def wb_settings_price_reset_cb(cb: CallbackQuery, session: AsyncSession) -
             qty_on=track.watch_qty,
         ),
     )
-    await cb.answer("Цель цены сброшена")
+    await cb.answer(tx.SETTINGS_PRICE_RESET_DONE)
 
 
 @router.callback_query(F.data.regexp(r"wbm:drop_reset:(\d+)"))
@@ -1227,7 +1227,7 @@ async def wb_settings_drop_reset_cb(cb: CallbackQuery, session: AsyncSession) ->
     track_id = int(cb.data.split(":")[2])
     track = await get_user_track_by_id(session, track_id)
     if not track:
-        await cb.answer("Трек не найден", show_alert=True)
+        await cb.answer(tx.TRACK_NOT_FOUND, show_alert=True)
         return
 
     user = await get_or_create_monitor_user(
@@ -1237,7 +1237,7 @@ async def wb_settings_drop_reset_cb(cb: CallbackQuery, session: AsyncSession) ->
     await session.commit()
 
     await cb.message.edit_text(
-        format_track_text(track) + "\n\n⚙️ Настройки:",
+        format_track_text(track) + tx.SETTINGS_SUFFIX,
         reply_markup=settings_kb(
             track_id,
             has_sizes=bool(track.last_sizes),
@@ -1245,7 +1245,7 @@ async def wb_settings_drop_reset_cb(cb: CallbackQuery, session: AsyncSession) ->
             qty_on=track.watch_qty,
         ),
     )
-    await cb.answer("Порог падения сброшен")
+    await cb.answer(tx.SETTINGS_DROP_RESET_DONE)
 
 
 @router.callback_query(F.data.regexp(r"wbm:qty:(\d+)"))
@@ -1256,12 +1256,12 @@ async def wb_settings_qty_cb(cb: CallbackQuery, session: AsyncSession) -> None:
     )
 
     if user.plan != "pro":
-        await cb.answer("⭐️ Доступно только на тарифе PRO", show_alert=True)
+        await cb.answer(tx.SETTINGS_QTY_PRO_ONLY, show_alert=True)
         return
 
     track = await get_user_track_by_id(session, track_id)
     if not track:
-        await cb.answer("Трек не найден", show_alert=True)
+        await cb.answer(tx.TRACK_NOT_FOUND, show_alert=True)
         return
 
     track.watch_qty = not track.watch_qty
@@ -1269,7 +1269,7 @@ async def wb_settings_qty_cb(cb: CallbackQuery, session: AsyncSession) -> None:
 
     try:
         await cb.message.edit_text(
-            format_track_text(track) + "\n\n⚙️ Настройки:",
+            format_track_text(track) + tx.SETTINGS_SUFFIX,
             reply_markup=settings_kb(
                 track_id,
                 has_sizes=bool(track.watch_sizes),
@@ -1280,7 +1280,15 @@ async def wb_settings_qty_cb(cb: CallbackQuery, session: AsyncSession) -> None:
     except TelegramBadRequest:
         pass
 
-    await cb.answer(f"Остаток: {'ВКЛ' if track.watch_qty else 'ВЫКЛ'}")
+    await cb.answer(
+        tx.SETTINGS_QTY_ANSWER.format(
+            state=(
+                tx.SETTINGS_QTY_STATE_ON
+                if track.watch_qty
+                else tx.SETTINGS_QTY_STATE_OFF
+            )
+        )
+    )
 
 
 @router.callback_query(F.data.regexp(r"wbm:sizes:(\d+)"))
@@ -1291,7 +1299,7 @@ async def wb_settings_sizes_cb(
     track = await get_user_track_by_id(session, track_id)
 
     if not track or not track.last_sizes:
-        await cb.answer("У этого товара нет размеров", show_alert=True)
+        await cb.answer(tx.SETTINGS_NO_SIZES, show_alert=True)
         return
 
     await state.update_data(track_id=track_id)
@@ -1302,13 +1310,14 @@ async def wb_settings_sizes_cb(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="❌ Отмена", callback_data=f"wbm:settings:{track_id}"
+                    text=tx.SETTINGS_CANCEL_BTN,
+                    callback_data=f"wbm:settings:{track_id}",
                 )
             ]
         ]
     )
     await cb.message.edit_text(
-        f"📏 Доступные размеры: {sizes_str}\n\nВведите размеры через запятую, которые хотите отслеживать (или отправьте '0' чтобы очистить фильтр):",
+        tx.SETTINGS_SIZES_PROMPT.format(sizes=sizes_str),
         reply_markup=cancel_kb,
     )
 
@@ -1329,7 +1338,7 @@ async def wb_settings_sizes_msg(
         return
 
     text = msg.text.strip()
-    if text == "0" or text.lower() == "все":
+    if text == "0" or text.lower() == tx.SETTINGS_SIZES_ALL_KEYWORD:
         track.watch_sizes = track.last_sizes or []
     else:
         sizes = [s.strip() for s in text.split(",")]
@@ -1340,6 +1349,12 @@ async def wb_settings_sizes_msg(
 
     await session.commit()
     await msg.answer(
-        f"✅ Размеры для отслеживания обновлены: {', '.join(track.watch_sizes) if track.watch_sizes else 'Нет'}"
+        tx.SETTINGS_SIZES_DONE.format(
+            sizes=(
+                ", ".join(track.watch_sizes)
+                if track.watch_sizes
+                else tx.SETTINGS_SIZES_NONE
+            )
+        )
     )
     await state.clear()

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 from aiohttp import ClientSession
 
+from bot import text as tx
 from bot.services.wb_client import WB_HTTP_HEADERS, WB_HTTP_PROXY
 
 _GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
@@ -31,15 +32,9 @@ class ReviewAnalysisRateLimitError(ReviewAnalysisError):
         self.wait_seconds = wait_seconds
         if wait_seconds and wait_seconds > 0:
             wait_text = _humanize_wait(wait_seconds)
-            message = (
-                "Сейчас высокая нагрузка на LLM API Groq. "
-                f"Подождите {wait_text} и попробуйте снова."
-            )
+            message = tx.REVIEW_ANALYSIS_RATE_LIMIT_WAIT.format(wait=wait_text)
         else:
-            message = (
-                "Сейчас высокая нагрузка на LLM API Groq. "
-                "Подождите немного и попробуйте снова."
-            )
+            message = tx.REVIEW_ANALYSIS_RATE_LIMIT_SOON
         super().__init__(message)
 
 
@@ -75,19 +70,15 @@ async def analyze_reviews_with_groq(
     api_key = groq_api_key.strip()
     model = groq_model.strip()
     if not api_key:
-        raise ReviewAnalysisConfigError(
-            "Не задан GROQ_API_KEY. Добавьте ключ в переменные окружения."
-        )
+        raise ReviewAnalysisConfigError(tx.REVIEW_ANALYSIS_NO_API_KEY)
     if not model:
-        raise ReviewAnalysisConfigError(
-            "Не задан GROQ_MODEL. Укажите модель в переменных окружения."
-        )
+        raise ReviewAnalysisConfigError(tx.REVIEW_ANALYSIS_NO_MODEL)
 
     feedbacks = await _fetch_feedbacks_for_item(wb_item_id)
     positive, negative = _collect_detailed_reviews(feedbacks)
 
     if not positive and not negative:
-        raise ReviewAnalysisError("Не удалось найти развернутые отзывы для анализа.")
+        raise ReviewAnalysisError(tx.REVIEW_ANALYSIS_NO_DETAILED)
 
     prompt_payload = {
         "product_title": product_title,
@@ -99,10 +90,7 @@ async def analyze_reviews_with_groq(
             _serialize_review(sample)
             for sample in negative[:_MAX_PROMPT_REVIEWS_PER_SIDE]
         ],
-        "task": (
-            "Выдели 3 сильных качества и 3 слабых качества товара на основе отзывов. "
-            "Если данных для слабых качеств недостаточно, верни меньше пунктов или пустой список."
-        ),
+        "task": tx.REVIEW_ANALYSIS_TASK_PROMPT,
     }
 
     result = await _request_groq(
@@ -193,11 +181,11 @@ def _compose_review_text(feedback: dict[str, object]) -> str:
     cons = _clean_text(feedback.get("cons"))
 
     if pros:
-        parts.append(f"Плюсы: {pros}")
+        parts.append(f"{tx.REVIEW_ANALYSIS_PROS_PREFIX}: {pros}")
     if cons:
-        parts.append(f"Минусы: {cons}")
+        parts.append(f"{tx.REVIEW_ANALYSIS_CONS_PREFIX}: {cons}")
     if text:
-        parts.append(f"Комментарий: {text}")
+        parts.append(f"{tx.REVIEW_ANALYSIS_COMMENT_PREFIX}: {text}")
 
     return " ".join(parts).strip()
 
@@ -206,7 +194,7 @@ def _clean_text(value: object) -> str:
     if not isinstance(value, str):
         return ""
     compact = " ".join(value.replace("\n", " ").split())
-    if compact in {"нет", "-", "—"}:
+    if compact in tx.REVIEW_ANALYSIS_EMPTY_MARKERS:
         return ""
     return compact
 
@@ -214,7 +202,7 @@ def _clean_text(value: object) -> str:
 async def _fetch_feedbacks_for_item(wb_item_id: int) -> list[dict[str, object]]:
     root_id = await _fetch_root_id(wb_item_id)
     if root_id is None:
-        raise ReviewAnalysisError("Не удалось получить данные карточки товара.")
+        raise ReviewAnalysisError(tx.REVIEW_ANALYSIS_NO_CARD)
 
     urls = (
         f"https://feedbacks1.wb.ru/feedbacks/v1/{root_id}",
@@ -238,7 +226,7 @@ async def _fetch_feedbacks_for_item(wb_item_id: int) -> list[dict[str, object]]:
             if isinstance(raw_feedbacks, list):
                 return [item for item in raw_feedbacks if isinstance(item, dict)]
 
-    raise ReviewAnalysisError("Не удалось получить отзывы от Wildberries.")
+    raise ReviewAnalysisError(tx.REVIEW_ANALYSIS_NO_FEEDBACKS)
 
 
 async def _fetch_root_id(wb_item_id: int) -> int | None:
@@ -288,17 +276,9 @@ async def _request_groq(
     fallback_models: list[str] | tuple[str, ...] | None,
     prompt_payload: dict[str, object],
 ) -> dict[str, list[str]]:
-    system_prompt = (
-        "Ты продуктовый аналитик. "
-        "На основе отзывов выдели ключевые сильные и слабые качества товара. "
-        "Верни только JSON без пояснений в формате: "
-        '{"strengths": ["..."], "weaknesses": ["..."]}. '
-        "Ограничение: максимум 3 пункта в каждом списке."
-    )
-    user_prompt = (
-        "Проанализируй отзывы и верни итог. "
-        "Данные для анализа:\n"
-        f"{json.dumps(prompt_payload, ensure_ascii=False)}"
+    system_prompt = tx.REVIEW_ANALYSIS_SYSTEM_PROMPT
+    user_prompt = tx.REVIEW_ANALYSIS_USER_PROMPT_PREFIX + json.dumps(
+        prompt_payload, ensure_ascii=False
     )
 
     model_candidates = _model_candidates(model, fallback_models)
@@ -344,10 +324,7 @@ async def _request_groq(
                     response.status,
                     detail,
                 )
-                raise ReviewAnalysisConfigError(
-                    "Groq отклонил запрос (401/403). Проверьте GROQ_API_KEY, "
-                    "Project API key и доступ к моделям в Model Permissions."
-                )
+                raise ReviewAnalysisConfigError(tx.REVIEW_ANALYSIS_GROQ_FORBIDDEN)
 
             if response.status != 200 or response.payload is None:
                 detail = _extract_groq_error_message(response.payload)
@@ -382,7 +359,7 @@ async def _request_groq(
     if api_errors:
         logger.warning("Groq analysis failed: %s", " | ".join(api_errors[:4]))
 
-    raise ReviewAnalysisError("Groq не вернул корректный ответ ни в одной модели.")
+    raise ReviewAnalysisError(tx.REVIEW_ANALYSIS_GROQ_EMPTY)
 
 
 def _model_candidates(
@@ -512,13 +489,13 @@ def _extract_groq_error_message(payload: dict[str, object] | None) -> str:
 
 def _humanize_wait(seconds: int) -> str:
     if seconds < 60:
-        return f"{seconds} сек"
+        return f"{seconds} {tx.TIME_SECONDS_SUFFIX}"
 
     minutes = seconds // 60
     rest = seconds % 60
     if rest == 0:
-        return f"{minutes} мин"
-    return f"{minutes} мин {rest} сек"
+        return f"{minutes} {tx.TIME_MINUTES_SUFFIX}"
+    return f"{minutes} {tx.TIME_MINUTES_SUFFIX} {rest} {tx.TIME_SECONDS_SUFFIX}"
 
 
 def _extract_message_content(response: dict[str, object]) -> str:

@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from bot.db.models import SnapshotModel
 from bot.db.redis import WorkerStateRD
+from bot import text as tx
 from bot.services.repository import (
     due_tracks_python_safe,
     expire_pro_users,
@@ -30,19 +31,9 @@ logger = logging.getLogger(__name__)
 
 ERROR_LIMIT = 5
 
-_MSG: dict[str, str] = {
-    "price_target": "💸 Цена достигла цели: {price} ₽ (цель: {target} ₽)",
-    "price_drop": "📉 Падение цены на {percent}%: {old} ₽ → {new} ₽",
-    "in_stock": "✅ Товар снова в наличии",
-    "stock_changed": "📦 Остаток изменился {direction}: {old} → {new}",
-    "sizes_appeared": "📏 Появились размеры: {sizes}",
-    "sizes_gone": "📏 Исчезли размеры: {sizes}",
-    "paused_error": "⚠️ Трек #{id} поставлен на паузу из-за ошибок.\n{title}",
-}
-
 
 def _msg(key: str, **kw: str | int) -> str:
-    return _MSG[key].format(**kw)
+    return tx.WORKER_EVENTS[key].format(**kw)
 
 
 def _price_drop_percent(old: Decimal | None, new: Decimal | None) -> int:
@@ -143,7 +134,11 @@ async def run_cycle(
                         await log_event(db_session, t.id, "event", h)
                         await bot.send_message(
                             user_tg_id,
-                            f"🔔 <b>{track_title}</b>\n{ev}\n{t.url}",
+                            tx.WORKER_NOTIFY_TEMPLATE.format(
+                                title=track_title,
+                                event=ev,
+                                url=t.url,
+                            ),
                             link_preview_options=LinkPreviewOptions(is_disabled=True),
                         )
                         t.last_notified_at = now
