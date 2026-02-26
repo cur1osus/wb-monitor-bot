@@ -54,6 +54,8 @@ class RuntimeConfigModel(Base):
     free_interval_min: Mapped[int] = mapped_column(Integer, default=360)
     pro_interval_min: Mapped[int] = mapped_column(Integer, default=60)
     cheap_match_percent: Mapped[int] = mapped_column(Integer, default=50)
+    free_daily_ai_limit: Mapped[int] = mapped_column(Integer, default=3)
+    pro_daily_ai_limit: Mapped[int] = mapped_column(Integer, default=10)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         default=lambda: datetime.now(UTC).replace(tzinfo=None),

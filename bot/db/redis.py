@@ -226,3 +226,50 @@ class WbReviewInsightsCacheRD(_RDBase):
             self.model_signature,
             ttl=_WB_REVIEW_INSIGHTS_TTL,
         )
+
+
+# ─── FeatureUsageDailyRD ──────────────────────────────────────────────────────
+class FeatureUsageDailyRD:
+    """Счетчик обращений к тяжелым фичам по дням (UTC)."""
+
+    @staticmethod
+    def _key(*, tg_user_id: int, feature: str, day_key: str) -> str:
+        return f"FeatureUsageDailyRD:{feature}:{tg_user_id}:{day_key}"
+
+    @staticmethod
+    def _day_key(now: datetime) -> str:
+        return now.strftime("%Y%m%d")
+
+    @staticmethod
+    def _ttl_until_day_end(now: datetime) -> int:
+        next_day = (now + timedelta(days=1)).replace(
+            hour=0,
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+        return max(1, int((next_day - now).total_seconds()))
+
+    @classmethod
+    async def try_consume(
+        cls,
+        redis: Redis,
+        *,
+        tg_user_id: int,
+        feature: str,
+        daily_limit: int,
+    ) -> tuple[bool, int]:
+        now = datetime.utcnow()  # noqa: DTZ003
+        day_key = cls._day_key(now)
+        ttl = cls._ttl_until_day_end(now)
+        key = cls._key(tg_user_id=tg_user_id, feature=feature, day_key=day_key)
+
+        used_now = int(await redis.incr(key))
+        if used_now == 1:
+            await redis.expire(key, ttl)
+
+        if used_now > daily_limit:
+            await redis.decr(key)
+            return False, daily_limit
+
+        return True, used_now

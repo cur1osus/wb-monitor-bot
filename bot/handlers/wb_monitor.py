@@ -23,6 +23,7 @@ from sqlalchemy import select
 
 from bot.db.models import TrackModel
 from bot.db.redis import (
+    FeatureUsageDailyRD,
     MonitorUserRD,
     WbReviewInsightsCacheRD,
     WbSimilarItemRD,
@@ -86,6 +87,10 @@ logger = logging.getLogger(__name__)
 _LIKELY_WB_INPUT_RE = re.compile(r"wildberries|wb\.ru|\d{6,15}", re.IGNORECASE)
 
 
+def _daily_feature_limit(plan: str, cfg: "RuntimeConfigView") -> int:
+    return cfg.pro_daily_ai_limit if plan == "pro" else cfg.free_daily_ai_limit
+
+
 def _format_review_insights_text(track_title: str, insights: ReviewInsights) -> str:
     return tx.review_insights_text(track_title, insights)
 
@@ -98,6 +103,8 @@ class SettingsState(StatesGroup):
     waiting_for_free_interval = State()
     waiting_for_pro_interval = State()
     waiting_for_cheap_threshold = State()
+    waiting_for_free_ai_limit = State()
+    waiting_for_pro_ai_limit = State()
 
 
 @router.callback_query(F.data == "wbm:home:0")
@@ -395,15 +402,34 @@ async def wb_find_cheaper_cb(
         ]
     )
 
-    await cb.message.edit_text(
-        tx.FIND_CHEAPER_PROGRESS.format(title=escape(track.title)),
-        reply_markup=back_kb,
-    )
-    await cb.answer(tx.FIND_CHEAPER_ANSWER)
-
     cfg = runtime_config_view(await get_runtime_config(session))
     cached = await WbSimilarSearchCacheRD.get(redis, track.id)
     if cached is None or cached.match_percent != cfg.cheap_match_percent:
+        user = await get_or_create_monitor_user(
+            session,
+            cb.from_user.id,
+            cb.from_user.username,
+        )
+        daily_limit = _daily_feature_limit(user.plan, cfg)
+        allowed, _used = await FeatureUsageDailyRD.try_consume(
+            redis,
+            tg_user_id=cb.from_user.id,
+            feature="cheap",
+            daily_limit=daily_limit,
+        )
+        if not allowed:
+            await cb.answer(
+                tx.FEATURE_LIMIT_CHEAP_REACHED.format(limit=daily_limit),
+                show_alert=True,
+            )
+            return
+
+        await cb.answer(tx.FIND_CHEAPER_ANSWER)
+        await cb.message.edit_text(
+            tx.FIND_CHEAPER_PROGRESS.format(title=escape(track.title)),
+            reply_markup=back_kb,
+        )
+
         current = await fetch_product(redis, track.wb_item_id, use_cache=False)
         if not current or current.price is None:
             await cb.message.edit_text(
@@ -439,6 +465,7 @@ async def wb_find_cheaper_cb(
             items=alternatives,
         ).save(redis)
     else:
+        await cb.answer()
         alternatives = cached.items
         current_price_text = cached.base_price
 
@@ -485,7 +512,6 @@ async def wb_reviews_analysis_cb(
         await cb.answer(tx.TRACK_NOT_FOUND, show_alert=True)
         return
 
-    await cb.answer(tx.REVIEWS_ANALYSIS_ANSWER)
     back_kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -496,11 +522,6 @@ async def wb_reviews_analysis_cb(
             ]
         ]
     )
-    await cb.message.edit_text(
-        tx.REVIEWS_ANALYSIS_PROGRESS.format(title=escape(track.title)),
-        reply_markup=back_kb,
-    )
-
     model_signature = ",".join(
         [
             se.groq_model.strip(),
@@ -513,9 +534,11 @@ async def wb_reviews_analysis_cb(
         track.wb_item_id,
         model_signature,
     )
+    cfg = runtime_config_view(await get_runtime_config(session))
 
     try:
         if cached is not None:
+            await cb.answer()
             insights = ReviewInsights(
                 strengths=list(cached.strengths),
                 weaknesses=list(cached.weaknesses),
@@ -523,6 +546,31 @@ async def wb_reviews_analysis_cb(
                 negative_samples=cached.negative_samples,
             )
         else:
+            user = await get_or_create_monitor_user(
+                session,
+                cb.from_user.id,
+                cb.from_user.username,
+            )
+            daily_limit = _daily_feature_limit(user.plan, cfg)
+            allowed, _used = await FeatureUsageDailyRD.try_consume(
+                redis,
+                tg_user_id=cb.from_user.id,
+                feature="reviews",
+                daily_limit=daily_limit,
+            )
+            if not allowed:
+                await cb.answer(
+                    tx.FEATURE_LIMIT_REVIEWS_REACHED.format(limit=daily_limit),
+                    show_alert=True,
+                )
+                return
+
+            await cb.answer(tx.REVIEWS_ANALYSIS_ANSWER)
+            await cb.message.edit_text(
+                tx.REVIEWS_ANALYSIS_PROGRESS.format(title=escape(track.title)),
+                reply_markup=back_kb,
+            )
+
             insights = await analyze_reviews_with_groq(
                 wb_item_id=track.wb_item_id,
                 product_title=track.title,
@@ -798,6 +846,32 @@ async def wb_admin_cfg_cheap_cb(cb: CallbackQuery, state: FSMContext) -> None:
     )
 
 
+@router.callback_query(F.data == "wbm:admin:cfg:ai_free")
+async def wb_admin_cfg_ai_free_cb(cb: CallbackQuery, state: FSMContext) -> None:
+    if not is_admin(cb.from_user.id, se):
+        await cb.answer(tx.NO_ACCESS, show_alert=True)
+        return
+
+    await state.set_state(SettingsState.waiting_for_free_ai_limit)
+    await cb.message.edit_text(
+        tx.ADMIN_FREE_AI_LIMIT_PROMPT,
+        reply_markup=admin_config_input_kb(),
+    )
+
+
+@router.callback_query(F.data == "wbm:admin:cfg:ai_pro")
+async def wb_admin_cfg_ai_pro_cb(cb: CallbackQuery, state: FSMContext) -> None:
+    if not is_admin(cb.from_user.id, se):
+        await cb.answer(tx.NO_ACCESS, show_alert=True)
+        return
+
+    await state.set_state(SettingsState.waiting_for_pro_ai_limit)
+    await cb.message.edit_text(
+        tx.ADMIN_PRO_AI_LIMIT_PROMPT,
+        reply_markup=admin_config_input_kb(),
+    )
+
+
 @router.message(SettingsState.waiting_for_free_interval, F.text)
 async def wb_admin_cfg_free_msg(
     msg: Message, state: FSMContext, session: AsyncSession
@@ -885,6 +959,64 @@ async def wb_admin_cfg_cheap_msg(
 
     cfg = await get_runtime_config(session)
     cfg.cheap_match_percent = value
+    cfg.updated_at = datetime.now(UTC).replace(tzinfo=None)
+    await session.commit()
+    await state.clear()
+
+    await msg.answer(
+        _admin_runtime_config_text(runtime_config_view(cfg)),
+        reply_markup=admin_config_kb(),
+    )
+
+
+@router.message(SettingsState.waiting_for_free_ai_limit, F.text)
+async def wb_admin_cfg_free_ai_limit_msg(
+    msg: Message, state: FSMContext, session: AsyncSession
+) -> None:
+    if not msg.from_user or not is_admin(msg.from_user.id, se):
+        await state.clear()
+        return
+
+    try:
+        value = int(msg.text.strip())
+    except ValueError:
+        await msg.answer(tx.ADMIN_FREE_AI_INT_ERROR)
+        return
+    if value < 1 or value > 50:
+        await msg.answer(tx.ADMIN_FREE_AI_RANGE_ERROR)
+        return
+
+    cfg = await get_runtime_config(session)
+    cfg.free_daily_ai_limit = value
+    cfg.updated_at = datetime.now(UTC).replace(tzinfo=None)
+    await session.commit()
+    await state.clear()
+
+    await msg.answer(
+        _admin_runtime_config_text(runtime_config_view(cfg)),
+        reply_markup=admin_config_kb(),
+    )
+
+
+@router.message(SettingsState.waiting_for_pro_ai_limit, F.text)
+async def wb_admin_cfg_pro_ai_limit_msg(
+    msg: Message, state: FSMContext, session: AsyncSession
+) -> None:
+    if not msg.from_user or not is_admin(msg.from_user.id, se):
+        await state.clear()
+        return
+
+    try:
+        value = int(msg.text.strip())
+    except ValueError:
+        await msg.answer(tx.ADMIN_PRO_AI_INT_ERROR)
+        return
+    if value < 1 or value > 200:
+        await msg.answer(tx.ADMIN_PRO_AI_RANGE_ERROR)
+        return
+
+    cfg = await get_runtime_config(session)
+    cfg.pro_daily_ai_limit = value
     cfg.updated_at = datetime.now(UTC).replace(tzinfo=None)
     await session.commit()
     await state.clear()

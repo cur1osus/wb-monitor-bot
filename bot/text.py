@@ -12,6 +12,15 @@ TRACK_NOT_FOUND = "Трек не найден"
 NO_ACCESS = "❌ Нет доступа"
 SETTINGS_SUFFIX = "\n\n⚙️ Настройки:"
 
+FEATURE_LIMIT_CHEAP_REACHED = (
+    "Лимит поиска похожих товаров на сегодня исчерпан ({limit}). "
+    "Попробуйте завтра или обновитесь до PRO."
+)
+FEATURE_LIMIT_REVIEWS_REACHED = (
+    "Лимит анализа отзывов на сегодня исчерпан ({limit}). "
+    "Попробуйте завтра или обновитесь до PRO."
+)
+
 DASHBOARD_TEMPLATE = (
     "🔎 <b>WB Monitor</b>\n"
     "<blockquote>Отслеживание цен и наличия на Wildberries</blockquote>\n\n"
@@ -55,6 +64,8 @@ BTN_ADMIN_GRANT_PRO = "🎁 Выдать PRO"
 BTN_ADMIN_FREE_INTERVAL = "⏱ FREE интервал"
 BTN_ADMIN_PRO_INTERVAL = "⚡ PRO интервал"
 BTN_ADMIN_CHEAP_THRESHOLD = "🔎 Порог похожести"
+BTN_ADMIN_FREE_AI_LIMIT = "🆓 Лимит AI FREE"
+BTN_ADMIN_PRO_AI_LIMIT = "⭐ Лимит AI PRO"
 QTY_ON_LABEL = "📦 Остаток: вкл"
 QTY_OFF_LABEL = "📦 Остаток: выкл"
 REFERRAL_SHARE_TEXT = "WB Monitor — отслеживай цены на Wildberries!"
@@ -147,18 +158,28 @@ ADMIN_RUNTIME_CONFIG_TEXT = (
     "🆓 FREE интервал: <b>{free} мин</b>\n"
     "⭐ PRO интервал: <b>{pro} мин</b>\n"
     "🔎 Порог похожести: <b>{cheap}%</b>\n\n"
+    "🆓 Лимит AI FREE в день: <b>{free_ai}</b>\n"
+    "⭐ Лимит AI PRO в день: <b>{pro_ai}</b>\n\n"
     "Изменения применяются сразу."
 )
 
 ADMIN_FREE_PROMPT = "🆓 Введите новый интервал FREE в минутах (от 5 до 1440):"
 ADMIN_PRO_PROMPT = "⭐ Введите новый интервал PRO в минутах (от 1 до 1440):"
 ADMIN_CHEAP_PROMPT = "🔎 Введите порог похожести для поиска дешевле (от 10 до 95):"
+ADMIN_FREE_AI_LIMIT_PROMPT = (
+    "🆓 Введите лимит AI-запросов в день для FREE (от 1 до 50):"
+)
+ADMIN_PRO_AI_LIMIT_PROMPT = "⭐ Введите лимит AI-запросов в день для PRO (от 1 до 200):"
 ADMIN_FREE_INT_ERROR = "❌ Введите целое число от 5 до 1440."
 ADMIN_FREE_RANGE_ERROR = "❌ Значение вне диапазона: 5..1440"
 ADMIN_PRO_INT_ERROR = "❌ Введите целое число от 1 до 1440."
 ADMIN_PRO_RANGE_ERROR = "❌ Значение вне диапазона: 1..1440"
 ADMIN_CHEAP_INT_ERROR = "❌ Введите целое число от 10 до 95."
 ADMIN_CHEAP_RANGE_ERROR = "❌ Значение вне диапазона: 10..95"
+ADMIN_FREE_AI_INT_ERROR = "❌ Введите целое число от 1 до 50."
+ADMIN_FREE_AI_RANGE_ERROR = "❌ Значение вне диапазона: 1..50"
+ADMIN_PRO_AI_INT_ERROR = "❌ Введите целое число от 1 до 200."
+ADMIN_PRO_AI_RANGE_ERROR = "❌ Значение вне диапазона: 1..200"
 ADMIN_INVALID_PERIOD = "Недоступный период"
 
 ADMIN_GRANT_PRO_PROMPT = (
@@ -305,6 +326,8 @@ def admin_runtime_config_text(cfg: object) -> str:
         free=getattr(cfg, "free_interval_min"),
         pro=getattr(cfg, "pro_interval_min"),
         cheap=getattr(cfg, "cheap_match_percent"),
+        free_ai=getattr(cfg, "free_daily_ai_limit"),
+        pro_ai=getattr(cfg, "pro_daily_ai_limit"),
     )
 
 

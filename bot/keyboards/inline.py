@@ -280,6 +280,10 @@ def admin_config_kb() -> InlineKeyboardMarkup:
                 _btn(tx.BTN_ADMIN_PRO_INTERVAL, "wbm:admin:cfg:pro"),
             ],
             [_btn(tx.BTN_ADMIN_CHEAP_THRESHOLD, "wbm:admin:cfg:cheap")],
+            [
+                _btn(tx.BTN_ADMIN_FREE_AI_LIMIT, "wbm:admin:cfg:ai_free"),
+                _btn(tx.BTN_ADMIN_PRO_AI_LIMIT, "wbm:admin:cfg:ai_pro"),
+            ],
             [_btn(tx.BTN_BACK, "wbm:admin:0")],
         ]
     )

@@ -47,6 +47,8 @@ class RuntimeConfigView:
     free_interval_min: int
     pro_interval_min: int
     cheap_match_percent: int
+    free_daily_ai_limit: int
+    pro_daily_ai_limit: int
 
 
 def _new_ref_code() -> str:
@@ -180,6 +182,8 @@ async def get_runtime_config(session: AsyncSession) -> RuntimeConfigModel:
         free_interval_min=FREE_INTERVAL,
         pro_interval_min=PRO_INTERVAL,
         cheap_match_percent=CHEAP_MATCH_PERCENT_DEFAULT,
+        free_daily_ai_limit=3,
+        pro_daily_ai_limit=10,
     )
     session.add(cfg)
     await session.flush()
@@ -191,6 +195,8 @@ def runtime_config_view(cfg: RuntimeConfigModel) -> RuntimeConfigView:
         free_interval_min=int(cfg.free_interval_min),
         pro_interval_min=int(cfg.pro_interval_min),
         cheap_match_percent=int(cfg.cheap_match_percent),
+        free_daily_ai_limit=int(cfg.free_daily_ai_limit),
+        pro_daily_ai_limit=int(cfg.pro_daily_ai_limit),
     )
 
 
