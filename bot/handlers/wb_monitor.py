@@ -178,8 +178,7 @@ async def _track_kb_with_usage(
 
 
 class SettingsState(StatesGroup):
-    waiting_for_price = State()
-    waiting_for_drop = State()
+    waiting_for_targets = State()
     waiting_for_sizes = State()
     waiting_for_pro_grant = State()
     waiting_for_free_interval = State()
@@ -1470,11 +1469,13 @@ async def _hide_settings_prompt_keyboard(msg: Message, state: FSMContext) -> Non
         pass
 
 
+@router.callback_query(F.data.regexp(r"wbm:targets:(\d+)"))
 @router.callback_query(F.data.regexp(r"wbm:price:(\d+)"))
-async def wb_settings_price_cb(cb: CallbackQuery, state: FSMContext) -> None:
+@router.callback_query(F.data.regexp(r"wbm:drop:(\d+)"))
+async def wb_settings_targets_cb(cb: CallbackQuery, state: FSMContext) -> None:
     track_id = int(cb.data.split(":")[2])
     await state.update_data(track_id=track_id, prompt_message_id=cb.message.message_id)
-    await state.set_state(SettingsState.waiting_for_price)
+    await state.set_state(SettingsState.waiting_for_targets)
 
     cancel_kb = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -1487,14 +1488,14 @@ async def wb_settings_price_cb(cb: CallbackQuery, state: FSMContext) -> None:
         ]
     )
     await cb.message.edit_text(
-        tx.SETTINGS_PRICE_PROMPT,
+        tx.SETTINGS_TARGETS_PROMPT,
         reply_markup=cancel_kb,
     )
 
 
-@router.message(SettingsState.waiting_for_price, F.text)
-async def wb_settings_price_msg(
-    msg: Message, state: FSMContext, session: AsyncSession
+@router.message(SettingsState.waiting_for_targets, F.text)
+async def wb_settings_targets_msg(
+    msg: Message, state: FSMContext, session: AsyncSession, redis: "Redis"
 ) -> None:
     if not msg.from_user:
         await state.clear()
@@ -1506,96 +1507,74 @@ async def wb_settings_price_msg(
         await state.clear()
         return
 
+    raw = (msg.text or "").strip().replace(",", ".")
+    is_percent = raw.endswith("%")
+
+    track = await get_user_track_by_id(session, track_id)
+    if not track:
+        await state.clear()
+        return
+
+    user = await get_or_create_monitor_user(
+        session, msg.from_user.id, msg.from_user.username
+    )
+
+    if is_percent:
+        try:
+            val = float(raw[:-1].strip())
+        except ValueError:
+            await msg.answer(tx.SETTINGS_TARGETS_ERROR)
+            return
+
+        if val < 0.1 or val > 99:
+            await msg.answer(tx.SETTINGS_TARGETS_DROP_RANGE_ERROR)
+            return
+
+        new_drop = int(round(val))
+        new_drop = max(1, min(99, new_drop))
+        track.target_drop_percent = new_drop
+        await session.commit()
+        await _hide_settings_prompt_keyboard(msg, state)
+        await msg.answer(
+            tx.SETTINGS_TARGETS_DROP_DONE.format(drop=new_drop, title=track.title),
+            reply_markup=settings_kb(
+                track_id,
+                has_sizes=bool(track.last_sizes),
+                pro_plan=user.plan == "pro",
+                qty_on=track.watch_qty,
+            ),
+        )
+        await state.clear()
+        return
+
     try:
-        new_price = float(msg.text.strip().replace(",", "."))
+        new_price = float(raw)
         if new_price < 0:
             raise ValueError
     except ValueError:
-        await msg.answer(tx.SETTINGS_PRICE_ERROR)
+        await msg.answer(tx.SETTINGS_TARGETS_ERROR)
         return
 
-    track = await get_user_track_by_id(session, track_id)
-    if track:
-        track.target_price = new_price
-        user = await get_or_create_monitor_user(
-            session, msg.from_user.id, msg.from_user.username
-        )
-        await session.commit()
-        await _hide_settings_prompt_keyboard(msg, state)
+    current = await fetch_product(redis, track.wb_item_id, use_cache=False)
+    current_price = current.price if current and current.price is not None else None
+    if current_price is not None and new_price > float(current_price):
         await msg.answer(
-            tx.SETTINGS_PRICE_DONE.format(title=track.title, price=new_price),
-            reply_markup=settings_kb(
-                track_id,
-                has_sizes=bool(track.last_sizes),
-                pro_plan=user.plan == "pro",
-                qty_on=track.watch_qty,
-            ),
+            tx.SETTINGS_TARGETS_PRICE_GT_CURRENT.format(current=current_price)
         )
+        return
 
-    await state.clear()
-
-
-@router.callback_query(F.data.regexp(r"wbm:drop:(\d+)"))
-async def wb_settings_drop_cb(cb: CallbackQuery, state: FSMContext) -> None:
-    track_id = int(cb.data.split(":")[2])
-    await state.update_data(track_id=track_id, prompt_message_id=cb.message.message_id)
-    await state.set_state(SettingsState.waiting_for_drop)
-
-    cancel_kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=tx.SETTINGS_CANCEL_BTN,
-                    callback_data=f"wbm:settings:{track_id}",
-                )
-            ]
-        ]
+    track.target_price = new_price
+    await session.commit()
+    await _hide_settings_prompt_keyboard(msg, state)
+    await msg.answer(
+        tx.SETTINGS_TARGETS_PRICE_DONE.format(title=track.title, price=new_price),
+        reply_markup=settings_kb(
+            track_id,
+            has_sizes=bool(track.last_sizes),
+            pro_plan=user.plan == "pro",
+            qty_on=track.watch_qty,
+        ),
     )
-    await cb.message.edit_text(
-        tx.SETTINGS_DROP_PROMPT,
-        reply_markup=cancel_kb,
-    )
-
-
-@router.message(SettingsState.waiting_for_drop, F.text)
-async def wb_settings_drop_msg(
-    msg: Message, state: FSMContext, session: AsyncSession
-) -> None:
-    if not msg.from_user:
-        await state.clear()
-        return
-
-    data = await state.get_data()
-    track_id = data.get("track_id")
-    if not track_id:
-        await state.clear()
-        return
-
-    try:
-        new_drop = int(msg.text.strip())
-        if new_drop < 1 or new_drop > 99:
-            raise ValueError
-    except ValueError:
-        await msg.answer(tx.SETTINGS_DROP_ERROR)
-        return
-
-    track = await get_user_track_by_id(session, track_id)
-    if track:
-        track.target_drop_percent = new_drop
-        user = await get_or_create_monitor_user(
-            session, msg.from_user.id, msg.from_user.username
-        )
-        await session.commit()
-        await _hide_settings_prompt_keyboard(msg, state)
-        await msg.answer(
-            tx.SETTINGS_DROP_DONE.format(drop=new_drop, title=track.title),
-            reply_markup=settings_kb(
-                track_id,
-                has_sizes=bool(track.last_sizes),
-                pro_plan=user.plan == "pro",
-                qty_on=track.watch_qty,
-            ),
-        )
 
     await state.clear()
 

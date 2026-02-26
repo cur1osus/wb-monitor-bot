@@ -160,8 +160,7 @@ def settings_kb(
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = [
         [
-            _btn(tx.BTN_TARGET_PRICE, f"wbm:price:{track_id}", style="primary"),
-            _btn(tx.BTN_DROP_PERCENT, f"wbm:drop:{track_id}", style="primary"),
+            _btn(tx.BTN_TARGETS, f"wbm:targets:{track_id}", style="primary"),
         ],
         [
             _btn(tx.BTN_RESET_TARGET, f"wbm:price_reset:{track_id}"),
