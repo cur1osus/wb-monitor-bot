@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 from secrets import token_urlsafe
 from typing import TYPE_CHECKING
 
@@ -400,12 +401,19 @@ async def log_event(
 
 
 async def get_admin_stats(session: AsyncSession, *, days: int) -> AdminStats:
-    now = datetime.now(UTC).replace(tzinfo=None)
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    # 1 день: только с 00:00 сегодняшнего дня.
-    # N дней: включая сегодня, с 00:00 (today - (N-1) days).
+    # Все таймстемпы в БД храним как naive UTC. Для «дня» считаем границу по Москве.
+    now_utc = datetime.now(UTC)
+    now = now_utc.replace(tzinfo=None)
+
+    msk = ZoneInfo("Europe/Moscow")
+    now_msk = now_utc.astimezone(msk)
+    today_start_msk = now_msk.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    # 1 день: только с 00:00 сегодняшнего дня (MSK).
+    # N дней: включая сегодня, с 00:00 (MSK) дня (today - (N-1)).
     days_span = max(1, int(days))
-    since = today_start - timedelta(days=days_span - 1)
+    since_msk = today_start_msk - timedelta(days=days_span - 1)
+    since = since_msk.astimezone(UTC).replace(tzinfo=None)
 
     total_users = int(
         await session.scalar(select(func.count(MonitorUserModel.id))) or 0
