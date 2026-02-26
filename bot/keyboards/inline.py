@@ -178,7 +178,11 @@ def settings_kb(
 # ─── Plan / Payment ───────────────────────────────────────────────────────────
 
 
-def plan_kb(is_pro: bool, expires_str: str | None = None) -> InlineKeyboardMarkup:
+def plan_kb(
+    is_pro: bool,
+    expires_str: str | None = None,
+    pay_btn_text: str | None = None,
+) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
 
     if not is_pro:
@@ -186,7 +190,7 @@ def plan_kb(is_pro: bool, expires_str: str | None = None) -> InlineKeyboardMarku
             [
                 # success — зелёный для кнопки оплаты (Bot API 9.4)
                 InlineKeyboardButton(
-                    text=tx.BTN_PAY_PRO,
+                    text=pay_btn_text or tx.BTN_PAY_PRO,
                     callback_data="wbm:pay:stars",
                     style="success",
                 )
@@ -256,6 +260,7 @@ def admin_panel_kb(selected_days: int | None = None) -> InlineKeyboardMarkup:
                 _btn(_label(30), "wbm:admin:stats:30"),
             ],
             [_btn(tx.BTN_ADMIN_SETTINGS, "wbm:admin:cfg")],
+            [_btn(tx.BTN_ADMIN_PROMO, "wbm:admin:promo")],
             [_btn(tx.BTN_ADMIN_GRANT_PRO, "wbm:admin:grantpro", style="success")],
             [_btn(tx.BTN_BACK_MENU, "wbm:home:0")],
         ]
@@ -291,3 +296,19 @@ def admin_config_kb() -> InlineKeyboardMarkup:
 
 def admin_config_input_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[_btn(tx.BTN_BACK, "wbm:admin:cfg")]])
+
+
+def admin_promo_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [_btn(tx.BTN_ADMIN_PROMO_PRO, "wbm:admin:promo:pro")],
+            [_btn(tx.BTN_ADMIN_PROMO_DISCOUNT, "wbm:admin:promo:discount")],
+            [_btn(tx.BTN_BACK, "wbm:admin:0")],
+        ]
+    )
+
+
+def admin_promo_input_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[_btn(tx.BTN_BACK, "wbm:admin:promo")]]
+    )

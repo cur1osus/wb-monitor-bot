@@ -34,6 +34,8 @@ from bot.db.redis import (
 from bot import text as tx
 from bot.keyboards.inline import (
     add_item_prompt_kb,
+    admin_promo_input_kb,
+    admin_promo_kb,
     back_to_dashboard_kb,
     dashboard_kb,
     dashboard_text,
@@ -48,11 +50,15 @@ from bot.keyboards.inline import (
     settings_kb,
 )
 from bot.services.repository import (
+    ActiveDiscount,
+    create_promo_link,
     count_user_tracks,
     create_track,
+    get_user_active_discount,
     get_or_create_monitor_user,
     get_user_track_by_id,
     get_user_tracks,
+    mark_discount_activation_consumed,
     toggle_track_active,
     delete_track,
     add_referral_reward_once,
@@ -92,6 +98,46 @@ _LIKELY_WB_INPUT_RE = re.compile(r"wildberries|wb\.ru|\d{6,15}", re.IGNORECASE)
 
 def _model_signature(model: str, review_limit: int) -> str:
     return f"{model}|limit:{review_limit}"
+
+
+def _build_payment_payload(*, amount: int, discount_activation_id: int | None) -> str:
+    activation = discount_activation_id or 0
+    return f"wbm_pro_30d:{activation}:{amount}"
+
+
+def _parse_payment_payload(payload: str | None) -> tuple[int, int] | None:
+    if not payload:
+        return None
+    parts = payload.split(":")
+    if len(parts) != 3 or parts[0] != "wbm_pro_30d":
+        return None
+    try:
+        activation_id = int(parts[1])
+        amount = int(parts[2])
+    except ValueError:
+        return None
+    if activation_id < 0 or amount <= 0:
+        return None
+    return activation_id, amount
+
+
+def _parse_promo_create_payload(text: str) -> tuple[int, int] | None:
+    parts = text.replace(",", " ").split()
+    if len(parts) != 2:
+        return None
+    try:
+        first = int(parts[0])
+        second = int(parts[1])
+    except ValueError:
+        return None
+    return first, second
+
+
+def _pay_button_text(discount: ActiveDiscount | None) -> str:
+    if not discount:
+        return tx.BTN_PAY_PRO
+    amount = max(1, int(round(150 * (100 - discount.percent) / 100)))
+    return tx.BTN_PAY_PRO_DISCOUNT.format(amount=amount, percent=discount.percent)
 
 
 def _daily_feature_limit(plan: str, cfg: "RuntimeConfigView") -> int:
@@ -189,6 +235,8 @@ class SettingsState(StatesGroup):
     waiting_for_pro_ai_limit = State()
     waiting_for_review_sample_limit = State()
     waiting_for_analysis_model = State()
+    waiting_for_promo_pro = State()
+    waiting_for_promo_discount = State()
 
 
 @router.callback_query(F.data == "wbm:home:0")
@@ -562,7 +610,9 @@ async def wb_find_cheaper_cb(
             )
             return
 
-        await log_event(session, track.id, "cheap_scan", f"cheap:{track.id}:{cb.from_user.id}")
+        await log_event(
+            session, track.id, "cheap_scan", f"cheap:{track.id}:{cb.from_user.id}"
+        )
         await session.commit()
 
         await cb.answer(tx.FIND_CHEAPER_ANSWER)
@@ -743,7 +793,12 @@ async def wb_reviews_analysis_cb(
                 )
                 return
 
-            await log_event(session, track.id, "reviews_scan", f"reviews:{track.id}:{cb.from_user.id}")
+            await log_event(
+                session,
+                track.id,
+                "reviews_scan",
+                f"reviews:{track.id}:{cb.from_user.id}",
+            )
             await session.commit()
 
             await cb.answer(tx.REVIEWS_ANALYSIS_ANSWER)
@@ -751,7 +806,9 @@ async def wb_reviews_analysis_cb(
                 title=escape(track.title)
             )
             spinner_task = asyncio.create_task(
-                _progress_spinner(cb.message, base_text=progress_text, reply_markup=back_kb)
+                _progress_spinner(
+                    cb.message, base_text=progress_text, reply_markup=back_kb
+                )
             )
 
             try:
@@ -842,25 +899,52 @@ async def wb_plan_cb(cb: CallbackQuery, session: AsyncSession) -> None:
         limit=limit,
         interval=interval,
     )
+
+    now = datetime.now(UTC).replace(tzinfo=None)
+    discount = await get_user_active_discount(session, user_id=user.id, now=now)
     if is_pro:
         text += tx.PLAN_PRO_ACTIVE
     else:
         text += tx.PLAN_PRO_UPSELL.format(interval=cfg.pro_interval_min)
+        if discount:
+            text += tx.PLAN_DISCOUNT_HINT.format(percent=discount.percent)
 
-    await cb.message.edit_text(text, reply_markup=plan_kb(is_pro, expires_str))
+    await cb.message.edit_text(
+        text,
+        reply_markup=plan_kb(
+            is_pro,
+            expires_str,
+            pay_btn_text=_pay_button_text(discount),
+        ),
+    )
 
 
 @router.callback_query(F.data == "wbm:pay:stars")
 async def wb_pay_stars_cb(cb: CallbackQuery, session: AsyncSession) -> None:
     from aiogram.types import LabeledPrice
 
-    await get_or_create_monitor_user(session, cb.from_user.id, cb.from_user.username)
+    user = await get_or_create_monitor_user(
+        session, cb.from_user.id, cb.from_user.username
+    )
+    now = datetime.now(UTC).replace(tzinfo=None)
+    discount = await get_user_active_discount(session, user_id=user.id, now=now)
+    amount = (
+        max(1, int(round(150 * (100 - discount.percent) / 100))) if discount else 150
+    )
+    payload = _build_payment_payload(
+        amount=amount,
+        discount_activation_id=(discount.activation_id if discount else None),
+    )
+    label = tx.PAYMENT_LABEL
+    if discount:
+        label = tx.BTN_PAY_PRO_DISCOUNT.format(amount=amount, percent=discount.percent)
+
     await cb.message.answer_invoice(
         title=tx.PAYMENT_TITLE,
         description=tx.PAYMENT_DESCRIPTION,
-        payload="wbm_pro_30d",
+        payload=payload,
         currency="XTR",
-        prices=[LabeledPrice(label=tx.PAYMENT_LABEL, amount=150)],
+        prices=[LabeledPrice(label=label, amount=amount)],
         provider_token="",
     )
 
@@ -888,6 +972,16 @@ async def successful_payment_handler(
     user.plan = "pro"
     user.pro_expires_at = base_expiry + timedelta(days=30)
     await set_user_tracks_interval(session, user.id, cfg.pro_interval_min)
+
+    parsed_payload = _parse_payment_payload(payment.invoice_payload)
+    if parsed_payload is not None:
+        discount_activation_id, _amount = parsed_payload
+        if discount_activation_id > 0:
+            await mark_discount_activation_consumed(
+                session,
+                activation_id=discount_activation_id,
+                now=now,
+            )
 
     referral_bonus_applied = False
     if user.referred_by_tg_user_id and payment.telegram_payment_charge_id:
@@ -994,6 +1088,42 @@ async def wb_admin_cfg_cb(
     await cb.message.edit_text(
         _admin_runtime_config_text(cfg),
         reply_markup=admin_config_kb(),
+    )
+
+
+@router.callback_query(F.data == "wbm:admin:promo")
+async def wb_admin_promo_cb(cb: CallbackQuery, state: FSMContext) -> None:
+    if not is_admin(cb.from_user.id, se):
+        await cb.answer(tx.NO_ACCESS, show_alert=True)
+        return
+
+    await state.clear()
+    await cb.message.edit_text(tx.ADMIN_PROMO_MENU_TEXT, reply_markup=admin_promo_kb())
+
+
+@router.callback_query(F.data == "wbm:admin:promo:pro")
+async def wb_admin_promo_pro_cb(cb: CallbackQuery, state: FSMContext) -> None:
+    if not is_admin(cb.from_user.id, se):
+        await cb.answer(tx.NO_ACCESS, show_alert=True)
+        return
+
+    await state.set_state(SettingsState.waiting_for_promo_pro)
+    await cb.message.edit_text(
+        tx.ADMIN_PROMO_PRO_PROMPT,
+        reply_markup=admin_promo_input_kb(),
+    )
+
+
+@router.callback_query(F.data == "wbm:admin:promo:discount")
+async def wb_admin_promo_discount_cb(cb: CallbackQuery, state: FSMContext) -> None:
+    if not is_admin(cb.from_user.id, se):
+        await cb.answer(tx.NO_ACCESS, show_alert=True)
+        return
+
+    await state.set_state(SettingsState.waiting_for_promo_discount)
+    await cb.message.edit_text(
+        tx.ADMIN_PROMO_DISCOUNT_PROMPT,
+        reply_markup=admin_promo_input_kb(),
     )
 
 
@@ -1294,6 +1424,109 @@ async def wb_admin_cfg_analysis_model_msg(
     await msg.answer(
         _admin_runtime_config_text(runtime_config_view(cfg)),
         reply_markup=admin_config_kb(),
+    )
+
+
+@router.message(SettingsState.waiting_for_promo_pro, F.text)
+async def wb_admin_promo_pro_msg(
+    msg: Message,
+    state: FSMContext,
+    session: AsyncSession,
+) -> None:
+    if not msg.from_user or not is_admin(msg.from_user.id, se):
+        await state.clear()
+        return
+
+    parsed = _parse_promo_create_payload(msg.text.strip())
+    if parsed is None:
+        await msg.answer(
+            tx.ADMIN_PROMO_PRO_FORMAT_ERROR,
+            reply_markup=admin_promo_input_kb(),
+        )
+        return
+
+    days, life_hours = parsed
+    if days < 1 or days > 365 or life_hours < 1 or life_hours > 720:
+        await msg.answer(
+            tx.ADMIN_PROMO_PRO_RANGE_ERROR,
+            reply_markup=admin_promo_input_kb(),
+        )
+        return
+
+    expires_at = datetime.now(UTC).replace(tzinfo=None) + timedelta(hours=life_hours)
+    promo = await create_promo_link(
+        session,
+        kind="pro_days",
+        value=days,
+        expires_at=expires_at,
+        created_by_tg_user_id=msg.from_user.id,
+    )
+    await session.commit()
+    await state.clear()
+
+    bot_me = await msg.bot.me()
+    link = f"https://t.me/{bot_me.username}?start=promo_{promo.code}"
+    await msg.answer(
+        tx.ADMIN_PROMO_CREATED_PRO.format(
+            link=link,
+            days=days,
+            expires=expires_at.strftime("%d.%m.%Y %H:%M"),
+        ),
+        reply_markup=admin_promo_kb(),
+    )
+
+
+@router.message(SettingsState.waiting_for_promo_discount, F.text)
+async def wb_admin_promo_discount_msg(
+    msg: Message,
+    state: FSMContext,
+    session: AsyncSession,
+) -> None:
+    if not msg.from_user or not is_admin(msg.from_user.id, se):
+        await state.clear()
+        return
+
+    parsed = _parse_promo_create_payload(msg.text.strip())
+    if parsed is None:
+        await msg.answer(
+            tx.ADMIN_PROMO_DISCOUNT_FORMAT_ERROR,
+            reply_markup=admin_promo_input_kb(),
+        )
+        return
+
+    discount_percent, life_hours = parsed
+    if (
+        discount_percent < 1
+        or discount_percent > 90
+        or life_hours < 1
+        or life_hours > 720
+    ):
+        await msg.answer(
+            tx.ADMIN_PROMO_DISCOUNT_RANGE_ERROR,
+            reply_markup=admin_promo_input_kb(),
+        )
+        return
+
+    expires_at = datetime.now(UTC).replace(tzinfo=None) + timedelta(hours=life_hours)
+    promo = await create_promo_link(
+        session,
+        kind="pro_discount",
+        value=discount_percent,
+        expires_at=expires_at,
+        created_by_tg_user_id=msg.from_user.id,
+    )
+    await session.commit()
+    await state.clear()
+
+    bot_me = await msg.bot.me()
+    link = f"https://t.me/{bot_me.username}?start=promo_{promo.code}"
+    await msg.answer(
+        tx.ADMIN_PROMO_CREATED_DISCOUNT.format(
+            link=link,
+            percent=discount_percent,
+            expires=expires_at.strftime("%d.%m.%Y %H:%M"),
+        ),
+        reply_markup=admin_promo_kb(),
     )
 
 

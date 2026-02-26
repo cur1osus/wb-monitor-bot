@@ -14,6 +14,8 @@ from sqlalchemy.orm import selectinload
 from bot.db.models import (
     AlertLogModel,
     MonitorUserModel,
+    PromoActivationModel,
+    PromoLinkModel,
     ReferralRewardModel,
     RuntimeConfigModel,
     SnapshotModel,
@@ -56,8 +58,18 @@ class RuntimeConfigView:
     analysis_model: str
 
 
+@dataclass(slots=True)
+class ActiveDiscount:
+    activation_id: int
+    percent: int
+
+
 def _new_ref_code() -> str:
     return token_urlsafe(6).replace("-", "").replace("_", "").upper()[:10]
+
+
+def _new_promo_code() -> str:
+    return token_urlsafe(24).replace("=", "")
 
 
 async def _ensure_referral_code(session: AsyncSession, user: MonitorUserModel) -> None:
@@ -162,6 +174,123 @@ async def add_referral_reward_once(
         )
     )
     return True
+
+
+async def create_promo_link(
+    session: AsyncSession,
+    *,
+    kind: str,
+    value: int,
+    expires_at: datetime,
+    created_by_tg_user_id: int,
+) -> PromoLinkModel:
+    while True:
+        code = _new_promo_code()
+        occupied = await session.scalar(
+            select(exists().where(PromoLinkModel.code == code))
+        )
+        if occupied:
+            continue
+        promo = PromoLinkModel(
+            code=code,
+            kind=kind,
+            value=value,
+            expires_at=expires_at,
+            is_active=True,
+            created_by_tg_user_id=created_by_tg_user_id,
+        )
+        session.add(promo)
+        await session.flush()
+        return promo
+
+
+async def get_promo_by_code(
+    session: AsyncSession,
+    *,
+    code: str,
+    now: datetime,
+) -> PromoLinkModel | None:
+    return await session.scalar(
+        select(PromoLinkModel).where(
+            PromoLinkModel.code == code,
+            PromoLinkModel.is_active.is_(True),
+            PromoLinkModel.expires_at >= now,
+        )
+    )
+
+
+async def get_promo_activation(
+    session: AsyncSession,
+    *,
+    promo_id: int,
+    user_id: int,
+) -> PromoActivationModel | None:
+    return await session.scalar(
+        select(PromoActivationModel).where(
+            PromoActivationModel.promo_id == promo_id,
+            PromoActivationModel.user_id == user_id,
+        )
+    )
+
+
+async def create_promo_activation(
+    session: AsyncSession,
+    *,
+    promo_id: int,
+    user_id: int,
+    tg_user_id: int,
+    value_applied: int,
+) -> PromoActivationModel:
+    activation = PromoActivationModel(
+        promo_id=promo_id,
+        user_id=user_id,
+        tg_user_id=tg_user_id,
+        value_applied=value_applied,
+    )
+    session.add(activation)
+    await session.flush()
+    return activation
+
+
+async def get_user_active_discount(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    now: datetime,
+) -> ActiveDiscount | None:
+    row = await session.execute(
+        select(PromoActivationModel.id, PromoLinkModel.value)
+        .join(PromoLinkModel, PromoLinkModel.id == PromoActivationModel.promo_id)
+        .where(
+            PromoActivationModel.user_id == user_id,
+            PromoActivationModel.consumed_at.is_(None),
+            PromoLinkModel.kind == "pro_discount",
+            PromoLinkModel.is_active.is_(True),
+            PromoLinkModel.expires_at >= now,
+        )
+        .order_by(PromoActivationModel.created_at.desc())
+        .limit(1)
+    )
+    first = row.first()
+    if not first:
+        return None
+    return ActiveDiscount(activation_id=int(first[0]), percent=int(first[1]))
+
+
+async def mark_discount_activation_consumed(
+    session: AsyncSession,
+    *,
+    activation_id: int,
+    now: datetime,
+) -> None:
+    await session.execute(
+        update(PromoActivationModel)
+        .where(
+            PromoActivationModel.id == activation_id,
+            PromoActivationModel.consumed_at.is_(None),
+        )
+        .values(consumed_at=now)
+    )
 
 
 async def count_user_tracks(

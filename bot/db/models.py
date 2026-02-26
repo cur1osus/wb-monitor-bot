@@ -166,3 +166,48 @@ class ReferralRewardModel(Base):
         DateTime,
         default=lambda: datetime.now(UTC).replace(tzinfo=None),
     )
+
+
+class PromoLinkModel(Base):
+    __tablename__ = "monitor_promo_links"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(String(96), unique=True, index=True)
+    kind: Mapped[str] = mapped_column(String(32), index=True)
+    value: Mapped[int] = mapped_column(Integer)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_by_tg_user_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(UTC).replace(tzinfo=None),
+    )
+
+
+class PromoActivationModel(Base):
+    __tablename__ = "monitor_promo_activations"
+    __table_args__ = (
+        UniqueConstraint(
+            "promo_id", "user_id", name="uq_monitor_promo_activation_user"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    promo_id: Mapped[int] = mapped_column(
+        ForeignKey("monitor_promo_links.id", ondelete="CASCADE"),
+        index=True,
+    )
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("monitor_users.id", ondelete="CASCADE"),
+        index=True,
+    )
+    tg_user_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    value_applied: Mapped[int] = mapped_column(Integer)
+    consumed_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(UTC).replace(tzinfo=None),
+        index=True,
+    )
