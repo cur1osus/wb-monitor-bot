@@ -87,6 +87,10 @@ logger = logging.getLogger(__name__)
 _LIKELY_WB_INPUT_RE = re.compile(r"wildberries|wb\.ru|\d{6,15}", re.IGNORECASE)
 
 
+def _model_signature(model: str, review_limit: int) -> str:
+    return f"{model}|limit:{review_limit}"
+
+
 def _daily_feature_limit(plan: str, cfg: "RuntimeConfigView") -> int:
     return cfg.pro_daily_ai_limit if plan == "pro" else cfg.free_daily_ai_limit
 
@@ -147,6 +151,8 @@ class SettingsState(StatesGroup):
     waiting_for_cheap_threshold = State()
     waiting_for_free_ai_limit = State()
     waiting_for_pro_ai_limit = State()
+    waiting_for_review_sample_limit = State()
+    waiting_for_analysis_model = State()
 
 
 @router.callback_query(F.data == "wbm:home:0")
@@ -634,19 +640,16 @@ async def wb_reviews_analysis_cb(
         )
         return
 
-    model_signature = ",".join(
-        [
-            se.groq_model.strip(),
-            *[m.strip() for m in se.groq_fallback_models if m.strip()],
-        ]
-    )
+    cfg = runtime_config_view(await get_runtime_config(session))
+    primary_model = (cfg.analysis_model or "").strip() or se.agentplatform_model.strip()
+    review_limit = max(10, min(int(cfg.review_sample_limit_per_side), 200))
+    model_signature = _model_signature(primary_model, review_limit)
 
     cached = await WbReviewInsightsCacheRD.get(
         redis,
         track.wb_item_id,
         model_signature,
     )
-    cfg = runtime_config_view(await get_runtime_config(session))
 
     try:
         if cached is not None:
@@ -689,9 +692,10 @@ async def wb_reviews_analysis_cb(
             insights = await analyze_reviews_with_groq(
                 wb_item_id=track.wb_item_id,
                 product_title=track.title,
-                groq_api_key=se.groq_api_key,
-                groq_model=se.groq_model,
-                groq_fallback_models=se.groq_fallback_models,
+                groq_api_key=se.agentplatform_api_key,
+                groq_model=primary_model,
+                api_base_url=se.agentplatform_base_url,
+                sample_limit_per_side=review_limit,
             )
             await WbReviewInsightsCacheRD(
                 wb_item_id=track.wb_item_id,
@@ -990,6 +994,32 @@ async def wb_admin_cfg_ai_pro_cb(cb: CallbackQuery, state: FSMContext) -> None:
     )
 
 
+@router.callback_query(F.data == "wbm:admin:cfg:reviews_limit")
+async def wb_admin_cfg_review_limit_cb(cb: CallbackQuery, state: FSMContext) -> None:
+    if not is_admin(cb.from_user.id, se):
+        await cb.answer(tx.NO_ACCESS, show_alert=True)
+        return
+
+    await state.set_state(SettingsState.waiting_for_review_sample_limit)
+    await cb.message.edit_text(
+        tx.ADMIN_REVIEW_SAMPLE_LIMIT_PROMPT,
+        reply_markup=admin_config_input_kb(),
+    )
+
+
+@router.callback_query(F.data == "wbm:admin:cfg:analysis_model")
+async def wb_admin_cfg_analysis_model_cb(cb: CallbackQuery, state: FSMContext) -> None:
+    if not is_admin(cb.from_user.id, se):
+        await cb.answer(tx.NO_ACCESS, show_alert=True)
+        return
+
+    await state.set_state(SettingsState.waiting_for_analysis_model)
+    await cb.message.edit_text(
+        tx.ADMIN_ANALYSIS_MODEL_PROMPT,
+        reply_markup=admin_config_input_kb(),
+    )
+
+
 @router.message(SettingsState.waiting_for_free_interval, F.text)
 async def wb_admin_cfg_free_msg(
     msg: Message, state: FSMContext, session: AsyncSession
@@ -1135,6 +1165,60 @@ async def wb_admin_cfg_pro_ai_limit_msg(
 
     cfg = await get_runtime_config(session)
     cfg.pro_daily_ai_limit = value
+    cfg.updated_at = datetime.now(UTC).replace(tzinfo=None)
+    await session.commit()
+    await state.clear()
+
+    await msg.answer(
+        _admin_runtime_config_text(runtime_config_view(cfg)),
+        reply_markup=admin_config_kb(),
+    )
+
+
+@router.message(SettingsState.waiting_for_review_sample_limit, F.text)
+async def wb_admin_cfg_review_sample_limit_msg(
+    msg: Message, state: FSMContext, session: AsyncSession
+) -> None:
+    if not msg.from_user or not is_admin(msg.from_user.id, se):
+        await state.clear()
+        return
+
+    try:
+        value = int(msg.text.strip())
+    except ValueError:
+        await msg.answer(tx.ADMIN_REVIEW_SAMPLE_LIMIT_INT_ERROR)
+        return
+    if value < 10 or value > 200:
+        await msg.answer(tx.ADMIN_REVIEW_SAMPLE_LIMIT_RANGE_ERROR)
+        return
+
+    cfg = await get_runtime_config(session)
+    cfg.review_sample_limit_per_side = value
+    cfg.updated_at = datetime.now(UTC).replace(tzinfo=None)
+    await session.commit()
+    await state.clear()
+
+    await msg.answer(
+        _admin_runtime_config_text(runtime_config_view(cfg)),
+        reply_markup=admin_config_kb(),
+    )
+
+
+@router.message(SettingsState.waiting_for_analysis_model, F.text)
+async def wb_admin_cfg_analysis_model_msg(
+    msg: Message, state: FSMContext, session: AsyncSession
+) -> None:
+    if not msg.from_user or not is_admin(msg.from_user.id, se):
+        await state.clear()
+        return
+
+    model = msg.text.strip()
+    if not model:
+        await msg.answer(tx.ADMIN_MODEL_EMPTY_ERROR)
+        return
+
+    cfg = await get_runtime_config(session)
+    cfg.analysis_model = model
     cfg.updated_at = datetime.now(UTC).replace(tzinfo=None)
     await session.commit()
     await state.clear()

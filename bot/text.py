@@ -67,6 +67,8 @@ BTN_ADMIN_PRO_INTERVAL = "⚡ PRO интервал"
 BTN_ADMIN_CHEAP_THRESHOLD = "🔎 Порог похожести"
 BTN_ADMIN_FREE_AI_LIMIT = "🆓 Лимит AI FREE"
 BTN_ADMIN_PRO_AI_LIMIT = "⭐ Лимит AI PRO"
+BTN_ADMIN_REVIEW_SAMPLE_LIMIT = "🧪 Лимит отзывов LLM"
+BTN_ADMIN_ANALYSIS_MODEL = "🤖 Модель анализа"
 QTY_ON_LABEL = "📦 Остаток: вкл"
 QTY_OFF_LABEL = "📦 Остаток: выкл"
 REFERRAL_SHARE_TEXT = "WB Monitor — отслеживай цены на Wildberries!"
@@ -164,6 +166,8 @@ ADMIN_RUNTIME_CONFIG_TEXT = (
     "🔎 Порог похожести: <b>{cheap}%</b>\n\n"
     "🆓 Лимит AI FREE в день: <b>{free_ai}</b>\n"
     "⭐ Лимит AI PRO в день: <b>{pro_ai}</b>\n\n"
+    "🧪 Лимит отзывов в анализе (на сторону): <b>{review_limit}</b>\n"
+    "🤖 Модель анализа: <code>{analysis_model}</code>\n\n"
     "Изменения применяются сразу."
 )
 
@@ -174,6 +178,10 @@ ADMIN_FREE_AI_LIMIT_PROMPT = (
     "🆓 Введите лимит AI-запросов в день для FREE (от 1 до 50):"
 )
 ADMIN_PRO_AI_LIMIT_PROMPT = "⭐ Введите лимит AI-запросов в день для PRO (от 1 до 200):"
+ADMIN_REVIEW_SAMPLE_LIMIT_PROMPT = "🧪 Введите лимит развернутых отзывов на каждую сторону (плюсы/минусы) от 10 до 200:"
+ADMIN_ANALYSIS_MODEL_PROMPT = (
+    "🤖 Введите ID модели для анализа (например, qwen/qwen3-32b):"
+)
 ADMIN_FREE_INT_ERROR = "❌ Введите целое число от 5 до 1440."
 ADMIN_FREE_RANGE_ERROR = "❌ Значение вне диапазона: 5..1440"
 ADMIN_PRO_INT_ERROR = "❌ Введите целое число от 1 до 1440."
@@ -184,6 +192,9 @@ ADMIN_FREE_AI_INT_ERROR = "❌ Введите целое число от 1 до 
 ADMIN_FREE_AI_RANGE_ERROR = "❌ Значение вне диапазона: 1..50"
 ADMIN_PRO_AI_INT_ERROR = "❌ Введите целое число от 1 до 200."
 ADMIN_PRO_AI_RANGE_ERROR = "❌ Значение вне диапазона: 1..200"
+ADMIN_REVIEW_SAMPLE_LIMIT_INT_ERROR = "❌ Введите целое число от 10 до 200."
+ADMIN_REVIEW_SAMPLE_LIMIT_RANGE_ERROR = "❌ Значение вне диапазона: 10..200"
+ADMIN_MODEL_EMPTY_ERROR = "❌ Модель не должна быть пустой."
 ADMIN_INVALID_PERIOD = "Недоступный период"
 
 ADMIN_GRANT_PRO_PROMPT = (
@@ -369,6 +380,8 @@ def admin_runtime_config_text(cfg: object) -> str:
         cheap=getattr(cfg, "cheap_match_percent"),
         free_ai=getattr(cfg, "free_daily_ai_limit"),
         pro_ai=getattr(cfg, "pro_daily_ai_limit"),
+        review_limit=getattr(cfg, "review_sample_limit_per_side"),
+        analysis_model=getattr(cfg, "analysis_model", "—"),
     )
 
 

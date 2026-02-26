@@ -11,9 +11,8 @@ from aiohttp import ClientSession
 from bot import text as tx
 from bot.services.wb_client import WB_HTTP_HEADERS, WB_HTTP_PROXY
 
-_GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 _MIN_DETAILED_REVIEW_LEN = 80
-_MAX_PROMPT_REVIEWS_PER_SIDE = 50
+_DEFAULT_PROMPT_REVIEWS_PER_SIDE = 50
 _MAX_REVIEW_TEXT_LEN = 700
 _MAX_QUALITY_LEN = 180
 logger = logging.getLogger(__name__)
@@ -46,7 +45,7 @@ class ReviewInsights:
     negative_samples: int
     positive_total: int = 0
     negative_total: int = 0
-    sample_limit_per_side: int = _MAX_PROMPT_REVIEWS_PER_SIDE
+    sample_limit_per_side: int = _DEFAULT_PROMPT_REVIEWS_PER_SIDE
 
 
 @dataclass(slots=True)
@@ -68,21 +67,25 @@ async def analyze_reviews_with_groq(
     product_title: str,
     groq_api_key: str,
     groq_model: str,
-    groq_fallback_models: list[str] | tuple[str, ...] | None = None,
+    api_base_url: str = "https://litellm.tokengate.ru/v1",
+    sample_limit_per_side: int = _DEFAULT_PROMPT_REVIEWS_PER_SIDE,
 ) -> ReviewInsights:
     api_key = groq_api_key.strip()
     model = groq_model.strip()
+    endpoint = _chat_completions_url(api_base_url)
     if not api_key:
         raise ReviewAnalysisConfigError(tx.REVIEW_ANALYSIS_NO_API_KEY)
     if not model:
         raise ReviewAnalysisConfigError(tx.REVIEW_ANALYSIS_NO_MODEL)
 
+    sample_limit = max(1, min(int(sample_limit_per_side), 200))
+
     feedbacks = await _fetch_feedbacks_for_item(wb_item_id)
     positive, negative = _collect_detailed_reviews(feedbacks)
     positive_total = len(positive)
     negative_total = len(negative)
-    positive_for_prompt = positive[:_MAX_PROMPT_REVIEWS_PER_SIDE]
-    negative_for_prompt = negative[:_MAX_PROMPT_REVIEWS_PER_SIDE]
+    positive_for_prompt = positive[:sample_limit]
+    negative_for_prompt = negative[:sample_limit]
 
     if not positive and not negative:
         raise ReviewAnalysisError(tx.REVIEW_ANALYSIS_NO_DETAILED)
@@ -101,7 +104,7 @@ async def analyze_reviews_with_groq(
     result = await _request_groq(
         api_key=api_key,
         model=model,
-        fallback_models=groq_fallback_models,
+        endpoint=endpoint,
         prompt_payload=prompt_payload,
     )
 
@@ -112,7 +115,7 @@ async def analyze_reviews_with_groq(
         negative_samples=len(negative_for_prompt),
         positive_total=positive_total,
         negative_total=negative_total,
-        sample_limit_per_side=_MAX_PROMPT_REVIEWS_PER_SIDE,
+        sample_limit_per_side=sample_limit,
     )
 
 
@@ -281,7 +284,7 @@ async def _request_groq(
     *,
     api_key: str,
     model: str,
-    fallback_models: list[str] | tuple[str, ...] | None,
+    endpoint: str,
     prompt_payload: dict[str, object],
 ) -> dict[str, list[str]]:
     system_prompt = tx.REVIEW_ANALYSIS_SYSTEM_PROMPT
@@ -289,108 +292,90 @@ async def _request_groq(
         prompt_payload, ensure_ascii=False
     )
 
-    model_candidates = _model_candidates(model, fallback_models)
     rate_limited_wait: int | None = None
     rate_limited_detected = False
     api_errors: list[str] = []
-    for current_model in model_candidates:
-        base_payload: dict[str, object] = {
-            "model": current_model,
-            "temperature": 0.2,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-        }
+    base_payload: dict[str, object] = {
+        "model": model,
+        "temperature": 0.2,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+    }
 
-        payload_with_format = {
-            **base_payload,
-            "response_format": {"type": "json_object"},
-        }
+    payload_with_format = {
+        **base_payload,
+        "response_format": {"type": "json_object"},
+    }
 
-        for payload in (payload_with_format, base_payload):
-            response = await _post_groq(api_key=api_key, payload=payload)
-            if response is None:
-                api_errors.append(f"{current_model}: network or timeout error")
-                continue
+    for payload in (payload_with_format, base_payload):
+        response = await _post_groq(api_key=api_key, payload=payload, endpoint=endpoint)
+        if response is None:
+            api_errors.append("network or timeout error")
+            continue
 
-            if response.status == 429:
-                rate_limited_detected = True
-                wait_seconds = _extract_rate_limit_wait_seconds(response.headers)
-                if wait_seconds is not None:
-                    if rate_limited_wait is None:
-                        rate_limited_wait = wait_seconds
-                    else:
-                        rate_limited_wait = max(rate_limited_wait, wait_seconds)
-                continue
+        if response.status == 429:
+            rate_limited_detected = True
+            wait_seconds = _extract_rate_limit_wait_seconds(response.headers)
+            if wait_seconds is not None:
+                if rate_limited_wait is None:
+                    rate_limited_wait = wait_seconds
+                else:
+                    rate_limited_wait = max(rate_limited_wait, wait_seconds)
+            continue
 
-            if response.status in (401, 403):
-                detail = _extract_groq_error_message(response.payload)
-                logger.warning(
-                    "Groq auth/permission error: model=%s status=%s detail=%s",
-                    current_model,
-                    response.status,
-                    detail,
-                )
-                raise ReviewAnalysisConfigError(tx.REVIEW_ANALYSIS_GROQ_FORBIDDEN)
-
-            if response.status != 200 or response.payload is None:
-                detail = _extract_groq_error_message(response.payload)
-                api_errors.append(f"{current_model}: HTTP {response.status} ({detail})")
-                continue
-
-            content = _extract_message_content(response.payload)
-            if not content:
-                continue
-
-            parsed = _parse_json_content(content)
-            strengths = _normalize_qualities(
-                parsed,
-                keys=("strengths", "good", "positive"),
+        if response.status in (401, 403):
+            detail = _extract_groq_error_message(response.payload)
+            logger.warning(
+                "LLM auth/permission error: model=%s status=%s detail=%s",
+                model,
+                response.status,
+                detail,
             )
-            weaknesses = _normalize_qualities(
-                parsed,
-                keys=("weaknesses", "bad", "negative"),
-            )
+            raise ReviewAnalysisConfigError(tx.REVIEW_ANALYSIS_GROQ_FORBIDDEN)
 
-            if strengths or weaknesses:
-                return {
-                    "strengths": strengths,
-                    "weaknesses": weaknesses,
-                }
+        if response.status != 200 or response.payload is None:
+            detail = _extract_groq_error_message(response.payload)
+            api_errors.append(f"HTTP {response.status} ({detail})")
+            continue
 
-            api_errors.append(f"{current_model}: empty/invalid model output")
+        content = _extract_message_content(response.payload)
+        if not content:
+            continue
+
+        parsed = _parse_json_content(content)
+        strengths = _normalize_qualities(
+            parsed,
+            keys=("strengths", "good", "positive"),
+        )
+        weaknesses = _normalize_qualities(
+            parsed,
+            keys=("weaknesses", "bad", "negative"),
+        )
+
+        if strengths or weaknesses:
+            return {
+                "strengths": strengths,
+                "weaknesses": weaknesses,
+            }
+
+        api_errors.append("empty/invalid model output")
 
     if rate_limited_detected:
         raise ReviewAnalysisRateLimitError(wait_seconds=rate_limited_wait)
 
     if api_errors:
-        logger.warning("Groq analysis failed: %s", " | ".join(api_errors[:4]))
+        logger.warning("LLM analysis failed: %s", " | ".join(api_errors[:4]))
 
     raise ReviewAnalysisError(tx.REVIEW_ANALYSIS_GROQ_EMPTY)
-
-
-def _model_candidates(
-    primary_model: str,
-    fallback_models: list[str] | tuple[str, ...] | None,
-) -> list[str]:
-    seen: set[str] = set()
-    out: list[str] = []
-
-    for item in [primary_model, *(fallback_models or [])]:
-        model = item.strip()
-        if not model or model in seen:
-            continue
-        seen.add(model)
-        out.append(model)
-
-    return out
 
 
 async def _post_groq(
     *,
     api_key: str,
     payload: dict[str, object],
+    endpoint: str,
 ) -> _GroqApiResponse | None:
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -400,7 +385,7 @@ async def _post_groq(
     async with ClientSession() as session:
         try:
             async with session.post(
-                _GROQ_URL,
+                endpoint,
                 headers=headers,
                 json=payload,
                 timeout=40,
@@ -421,6 +406,17 @@ async def _post_groq(
                 )
         except Exception:
             return None
+
+
+def _chat_completions_url(base_url: str) -> str:
+    normalized = base_url.strip().rstrip("/")
+    if not normalized:
+        normalized = "https://litellm.tokengate.ru/v1"
+    if normalized.endswith("/chat/completions"):
+        return normalized
+    if normalized.endswith("/v1"):
+        return f"{normalized}/chat/completions"
+    return f"{normalized}/v1/chat/completions"
 
 
 def _extract_rate_limit_wait_seconds(headers: dict[str, str]) -> int | None:

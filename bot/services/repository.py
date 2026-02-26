@@ -49,6 +49,8 @@ class RuntimeConfigView:
     cheap_match_percent: int
     free_daily_ai_limit: int
     pro_daily_ai_limit: int
+    review_sample_limit_per_side: int
+    analysis_model: str
 
 
 def _new_ref_code() -> str:
@@ -184,6 +186,8 @@ async def get_runtime_config(session: AsyncSession) -> RuntimeConfigModel:
         cheap_match_percent=CHEAP_MATCH_PERCENT_DEFAULT,
         free_daily_ai_limit=3,
         pro_daily_ai_limit=10,
+        review_sample_limit_per_side=50,
+        analysis_model="qwen/qwen3-32b",
     )
     session.add(cfg)
     await session.flush()
@@ -197,6 +201,8 @@ def runtime_config_view(cfg: RuntimeConfigModel) -> RuntimeConfigView:
         cheap_match_percent=int(cfg.cheap_match_percent),
         free_daily_ai_limit=int(cfg.free_daily_ai_limit),
         pro_daily_ai_limit=int(cfg.pro_daily_ai_limit),
+        review_sample_limit_per_side=int(cfg.review_sample_limit_per_side),
+        analysis_model=str(cfg.analysis_model),
     )
 
 

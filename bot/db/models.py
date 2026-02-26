@@ -56,6 +56,8 @@ class RuntimeConfigModel(Base):
     cheap_match_percent: Mapped[int] = mapped_column(Integer, default=50)
     free_daily_ai_limit: Mapped[int] = mapped_column(Integer, default=3)
     pro_daily_ai_limit: Mapped[int] = mapped_column(Integer, default=10)
+    review_sample_limit_per_side: Mapped[int] = mapped_column(Integer, default=50)
+    analysis_model: Mapped[str] = mapped_column(String(128), default="qwen/qwen3-32b")
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         default=lambda: datetime.now(UTC).replace(tzinfo=None),

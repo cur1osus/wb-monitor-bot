@@ -30,10 +30,17 @@ class Settings:
     developer_id: int = int(os.environ.get("DEVELOPER_ID", 0))
     admin_ids_str: str = os.environ.get("ADMIN_IDS", "")
     dev: bool = os.environ.get("DEV", "false").lower() == "true"
-    groq_api_key: str = os.environ.get("GROQ_API_KEY", "")
-    groq_model: str = os.environ.get("GROQ_MODEL", "qwen/qwen3-32b")
-    groq_fallback_models_str: str = os.environ.get(
-        "GROQ_FALLBACK_MODELS", "openai/gpt-oss-120b"
+    agentplatform_api_key: str = os.environ.get(
+        "AGENTPLATFORM_API_KEY",
+        os.environ.get("GROQ_API_KEY", ""),
+    )
+    agentplatform_model: str = os.environ.get(
+        "AGENTPLATFORM_MODEL",
+        os.environ.get("GROQ_MODEL", "qwen/qwen3-32b"),
+    )
+    agentplatform_base_url: str = os.environ.get(
+        "AGENTPLATFORM_BASE_URL",
+        "https://litellm.tokengate.ru/v1",
     )
 
     psql: PostgresSettings = PostgresSettings()
@@ -43,22 +50,6 @@ class Settings:
     def admin_ids_list(self) -> set[int]:
         raw = self.admin_ids_str.strip()
         return {int(p.strip()) for p in raw.split(",") if p.strip().isdigit()}
-
-    @property
-    def groq_fallback_models(self) -> list[str]:
-        raw = self.groq_fallback_models_str.strip()
-        if not raw:
-            return []
-
-        seen: set[str] = set()
-        out: list[str] = []
-        for item in raw.split(","):
-            model = item.strip()
-            if not model or model in seen:
-                continue
-            seen.add(model)
-            out.append(model)
-        return out
 
     def psql_dsn(self, is_migration: bool = False) -> URL:
         return URL.create(

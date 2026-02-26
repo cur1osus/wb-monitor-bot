@@ -288,6 +288,8 @@ def admin_config_kb() -> InlineKeyboardMarkup:
                 _btn(tx.BTN_ADMIN_FREE_AI_LIMIT, "wbm:admin:cfg:ai_free"),
                 _btn(tx.BTN_ADMIN_PRO_AI_LIMIT, "wbm:admin:cfg:ai_pro"),
             ],
+            [_btn(tx.BTN_ADMIN_REVIEW_SAMPLE_LIMIT, "wbm:admin:cfg:reviews_limit")],
+            [_btn(tx.BTN_ADMIN_ANALYSIS_MODEL, "wbm:admin:cfg:analysis_model")],
             [_btn(tx.BTN_BACK, "wbm:admin:0")],
         ]
     )
