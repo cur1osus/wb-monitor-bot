@@ -23,7 +23,6 @@ _ANTIBOT_MARKERS = (
     "captcha",
     "access denied",
 )
-_ANTIBOT_URL_HINTS = ("/security/", "anti_bot", "captcha")
 
 
 def _parse_price(text: str) -> Decimal | None:
@@ -66,12 +65,9 @@ def _normalize_title(title: str, fallback: str) -> str:
     return fallback
 
 
-def _extract_antibot_marker(content: str) -> str | None:
+def _is_antibot_page(content: str) -> bool:
     lowered = content.lower()
-    for marker in _ANTIBOT_MARKERS:
-        if marker in lowered:
-            return marker
-    return None
+    return any(marker in lowered for marker in _ANTIBOT_MARKERS)
 
 
 async def fetch_visual_similar_products(
@@ -102,19 +98,10 @@ async def fetch_visual_similar_products(
                 await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
                 await page.wait_for_timeout(1200)
                 content = await page.content()
-                marker = _extract_antibot_marker(content)
-                title = (await page.title()).strip()
-                final_url = page.url
-
-                if marker or any(
-                    hint in final_url.lower() for hint in _ANTIBOT_URL_HINTS
-                ):
+                if _is_antibot_page(content):
                     logger.warning(
-                        "WB_BROWSER_SIMILAR_ANTIBOT item=%s marker=%s final_url=%s title=%s",
+                        "WB browser similar returned anti-bot page for item %s",
                         wb_item_id,
-                        marker or "url_hint",
-                        final_url,
-                        title,
                     )
                     return []
 
@@ -124,12 +111,9 @@ async def fetch_visual_similar_products(
                         timeout=timeout_ms,
                     )
                 except PlaywrightTimeoutError:
-                    title = (await page.title()).strip()
                     logger.warning(
-                        "WB_BROWSER_SIMILAR_TIMEOUT item=%s final_url=%s title=%s",
+                        "WB browser similar timeout waiting products for item %s",
                         wb_item_id,
-                        page.url,
-                        title,
                     )
                     return []
 
@@ -160,7 +144,7 @@ async def fetch_visual_similar_products(
                 await browser.close()
     except Exception:
         logger.warning(
-            "WB_BROWSER_SIMILAR_ERROR item=%s",
+            "WB browser similar provider failed for item %s",
             wb_item_id,
             exc_info=True,
         )
@@ -168,8 +152,7 @@ async def fetch_visual_similar_products(
 
     if not isinstance(raw_items, list):
         logger.warning(
-            "WB_BROWSER_SIMILAR_INVALID_PAYLOAD item=%s",
-            wb_item_id,
+            "WB browser similar returned invalid payload for item %s", wb_item_id
         )
         return []
 
@@ -214,9 +197,10 @@ async def fetch_visual_similar_products(
             break
 
     if not out:
-        logger.warning("WB_BROWSER_SIMILAR_EMPTY item=%s", wb_item_id)
+        logger.warning(
+            "WB browser similar returned empty result for item %s", wb_item_id
+        )
         return []
 
     out.sort(key=lambda p: p.price)
-    logger.info("WB_BROWSER_SIMILAR_OK item=%s count=%s", wb_item_id, len(out))
     return out[:safe_limit]
