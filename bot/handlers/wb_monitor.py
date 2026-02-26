@@ -700,7 +700,10 @@ async def wb_find_cheaper_cb(
             return
 
         await log_event(
-            session, track.id, "cheap_scan", f"cheap:{track.id}:{cb.from_user.id}"
+            session,
+            track.id,
+            "cheap_scan",
+            f"cheap:{track.id}:{cb.from_user.id}:{datetime.now(UTC).timestamp()}",
         )
         await session.commit()
 
@@ -901,7 +904,7 @@ async def wb_reviews_analysis_cb(
                 session,
                 track.id,
                 "reviews_scan",
-                f"reviews:{track.id}:{cb.from_user.id}",
+                f"reviews:{track.id}:{cb.from_user.id}:{datetime.now(UTC).timestamp()}",
             )
             await session.commit()
 
