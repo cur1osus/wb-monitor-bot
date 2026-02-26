@@ -439,6 +439,5 @@ def format_track_text(track: "TrackModel") -> str:
         f"🎯 Цель цены: {target_price}\n"
         f"📉 Порог падения: {drop}\n"
         f"{sizes_line}"
-        f"⏱ Интервал: {track.check_interval_min} мин\n"
         f"📡 Статус: {status}"
     )
