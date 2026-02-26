@@ -150,12 +150,14 @@ HELP_TEXT = (
 
 ADMIN_STATS_TEXT = (
     "🛠 <b>Админ панель</b>\n"
-    "Период: <b>{days} дней</b>\n\n"
+    "Период: <b>{days} {days_word}</b>\n\n"
     "👥 Пользователи: <b>{total_users}</b> (новых: +{new_users})\n"
     "⭐ PRO активных: <b>{pro_users}</b>\n"
     "📦 Треки: <b>{total_tracks}</b> (активных: {active_tracks}, новых: +{new_tracks})\n"
     "🔁 Проверок: <b>{checks_count}</b>\n"
-    "🔔 Уведомлений: <b>{alerts_count}</b>"
+    "🔔 Уведомлений: <b>{alerts_count}</b>\n"
+    "🔎 Поисков дешевле: <b>{cheap_scans_count}</b>\n"
+    "🧠 Анализов отзывов: <b>{reviews_scans_count}</b>"
 )
 
 ADMIN_RUNTIME_CONFIG_TEXT = (
