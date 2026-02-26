@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import re
 from dataclasses import dataclass
@@ -14,6 +15,7 @@ _MIN_DETAILED_REVIEW_LEN = 80
 _MAX_PROMPT_REVIEWS_PER_SIDE = 25
 _MAX_REVIEW_TEXT_LEN = 700
 _MAX_QUALITY_LEN = 180
+logger = logging.getLogger(__name__)
 
 
 class ReviewAnalysisError(RuntimeError):
@@ -302,6 +304,7 @@ async def _request_groq(
     model_candidates = _model_candidates(model, fallback_models)
     rate_limited_wait: int | None = None
     rate_limited_detected = False
+    api_errors: list[str] = []
     for current_model in model_candidates:
         base_payload: dict[str, object] = {
             "model": current_model,
@@ -320,6 +323,7 @@ async def _request_groq(
         for payload in (payload_with_format, base_payload):
             response = await _post_groq(api_key=api_key, payload=payload)
             if response is None:
+                api_errors.append(f"{current_model}: network or timeout error")
                 continue
 
             if response.status == 429:
@@ -332,7 +336,22 @@ async def _request_groq(
                         rate_limited_wait = max(rate_limited_wait, wait_seconds)
                 continue
 
+            if response.status in (401, 403):
+                detail = _extract_groq_error_message(response.payload)
+                logger.warning(
+                    "Groq auth/permission error: model=%s status=%s detail=%s",
+                    current_model,
+                    response.status,
+                    detail,
+                )
+                raise ReviewAnalysisConfigError(
+                    "Groq отклонил запрос (401/403). Проверьте GROQ_API_KEY, "
+                    "Project API key и доступ к моделям в Model Permissions."
+                )
+
             if response.status != 200 or response.payload is None:
+                detail = _extract_groq_error_message(response.payload)
+                api_errors.append(f"{current_model}: HTTP {response.status} ({detail})")
                 continue
 
             content = _extract_message_content(response.payload)
@@ -355,8 +374,13 @@ async def _request_groq(
                     "weaknesses": weaknesses,
                 }
 
+            api_errors.append(f"{current_model}: empty/invalid model output")
+
     if rate_limited_detected:
         raise ReviewAnalysisRateLimitError(wait_seconds=rate_limited_wait)
+
+    if api_errors:
+        logger.warning("Groq analysis failed: %s", " | ".join(api_errors[:4]))
 
     raise ReviewAnalysisError("Groq не вернул корректный ответ ни в одной модели.")
 
@@ -467,6 +491,23 @@ def _parse_duration_seconds(value: str) -> int | None:
     if not matched or total <= 0:
         return None
     return max(1, int(math.ceil(total)))
+
+
+def _extract_groq_error_message(payload: dict[str, object] | None) -> str:
+    if not isinstance(payload, dict):
+        return "unknown error"
+
+    error = payload.get("error")
+    if isinstance(error, dict):
+        message = error.get("message")
+        if isinstance(message, str) and message.strip():
+            return message.strip()
+
+    message = payload.get("message")
+    if isinstance(message, str) and message.strip():
+        return message.strip()
+
+    return "unknown error"
 
 
 def _humanize_wait(seconds: int) -> str:
