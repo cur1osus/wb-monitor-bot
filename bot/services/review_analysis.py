@@ -55,23 +55,23 @@ class _ReviewSample:
 
 
 @dataclass(slots=True)
-class _GroqApiResponse:
+class _LlmApiResponse:
     status: int
     payload: dict[str, object] | None
     headers: dict[str, str]
 
 
-async def analyze_reviews_with_groq(
+async def analyze_reviews_with_llm(
     *,
     wb_item_id: int,
     product_title: str,
-    groq_api_key: str,
-    groq_model: str,
+    api_key: str,
+    model: str,
     api_base_url: str = "https://litellm.tokengate.ru/v1",
     sample_limit_per_side: int = _DEFAULT_PROMPT_REVIEWS_PER_SIDE,
 ) -> ReviewInsights:
-    api_key = groq_api_key.strip()
-    model = groq_model.strip()
+    api_key = api_key.strip()
+    model = model.strip()
     endpoint = _chat_completions_url(api_base_url)
     if not api_key:
         raise ReviewAnalysisConfigError(tx.REVIEW_ANALYSIS_NO_API_KEY)
@@ -101,7 +101,7 @@ async def analyze_reviews_with_groq(
         "task": tx.REVIEW_ANALYSIS_TASK_PROMPT,
     }
 
-    result = await _request_groq(
+    result = await _request_llm(
         api_key=api_key,
         model=model,
         endpoint=endpoint,
@@ -280,7 +280,7 @@ async def _fetch_root_id(wb_item_id: int) -> int | None:
     return None
 
 
-async def _request_groq(
+async def _request_llm(
     *,
     api_key: str,
     model: str,
@@ -310,7 +310,7 @@ async def _request_groq(
     }
 
     for payload in (payload_with_format, base_payload):
-        response = await _post_groq(api_key=api_key, payload=payload, endpoint=endpoint)
+        response = await _post_llm(api_key=api_key, payload=payload, endpoint=endpoint)
         if response is None:
             api_errors.append("network or timeout error")
             continue
@@ -326,17 +326,17 @@ async def _request_groq(
             continue
 
         if response.status in (401, 403):
-            detail = _extract_groq_error_message(response.payload)
+            detail = _extract_llm_error_message(response.payload)
             logger.warning(
                 "LLM auth/permission error: model=%s status=%s detail=%s",
                 model,
                 response.status,
                 detail,
             )
-            raise ReviewAnalysisConfigError(tx.REVIEW_ANALYSIS_GROQ_FORBIDDEN)
+            raise ReviewAnalysisConfigError(tx.REVIEW_ANALYSIS_LLM_FORBIDDEN)
 
         if response.status != 200 or response.payload is None:
-            detail = _extract_groq_error_message(response.payload)
+            detail = _extract_llm_error_message(response.payload)
             api_errors.append(f"HTTP {response.status} ({detail})")
             continue
 
@@ -368,15 +368,15 @@ async def _request_groq(
     if api_errors:
         logger.warning("LLM analysis failed: %s", " | ".join(api_errors[:4]))
 
-    raise ReviewAnalysisError(tx.REVIEW_ANALYSIS_GROQ_EMPTY)
+    raise ReviewAnalysisError(tx.REVIEW_ANALYSIS_LLM_EMPTY)
 
 
-async def _post_groq(
+async def _post_llm(
     *,
     api_key: str,
     payload: dict[str, object],
     endpoint: str,
-) -> _GroqApiResponse | None:
+) -> _LlmApiResponse | None:
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -399,7 +399,7 @@ async def _post_groq(
                 except Exception:
                     data = None
 
-                return _GroqApiResponse(
+                return _LlmApiResponse(
                     status=resp.status,
                     payload=data,
                     headers=header_map,
@@ -474,7 +474,7 @@ def _parse_duration_seconds(value: str) -> int | None:
     return max(1, int(math.ceil(total)))
 
 
-def _extract_groq_error_message(payload: dict[str, object] | None) -> str:
+def _extract_llm_error_message(payload: dict[str, object] | None) -> str:
     if not isinstance(payload, dict):
         return "unknown error"
 

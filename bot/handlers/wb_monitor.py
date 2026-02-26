@@ -66,7 +66,7 @@ from bot.services.review_analysis import (
     ReviewAnalysisError,
     ReviewInsights,
     ReviewAnalysisRateLimitError,
-    analyze_reviews_with_groq,
+    analyze_reviews_with_llm,
 )
 from bot.services.utils import is_admin
 from bot.services.wb_client import (
@@ -689,11 +689,11 @@ async def wb_reviews_analysis_cb(
                 reply_markup=back_kb,
             )
 
-            insights = await analyze_reviews_with_groq(
+            insights = await analyze_reviews_with_llm(
                 wb_item_id=track.wb_item_id,
                 product_title=track.title,
-                groq_api_key=se.agentplatform_api_key,
-                groq_model=primary_model,
+                api_key=se.agentplatform_api_key,
+                model=primary_model,
                 api_base_url=se.agentplatform_base_url,
                 sample_limit_per_side=review_limit,
             )
