@@ -5,6 +5,7 @@ Redis ORM — лёгкий кэш-слой для часто запрашива�
   MonitorUserRD  — кэш пользователя (plan, pro_expires_at, referral_code, …)
   WbItemCacheRD  — кэш WB-товара (price, in_stock, sizes, …)
   WbSimilarSearchCacheRD — кэш похожих товаров для кнопки «Найти дешевле»
+  WbBrowserSimilarCacheRD — кэш browser-provider похожих товаров
   WorkerStateRD  — состояние background-воркера (heartbeat, длительность цикла)
 
 Использование:
@@ -149,6 +150,7 @@ class WbSimilarSearchCacheRD(_RDBase):
     base_price: str
     match_percent: int | None = None
     items: list[WbSimilarItemRD] = []
+    provider_mode: str = "api"
 
     @classmethod
     async def get(
@@ -161,6 +163,28 @@ class WbSimilarSearchCacheRD(_RDBase):
 
     async def save(self, redis: Redis) -> None:
         await self._save_raw(redis, self.track_id, ttl=_WB_SIMILAR_TTL)
+
+
+_WB_BROWSER_SIMILAR_TTL: Final[int] = int(timedelta(minutes=15).total_seconds())
+
+
+class WbBrowserSimilarCacheRD(_RDBase):
+    """Кэш browser-provider похожих товаров. TTL 15 минут."""
+
+    wb_item_id: int
+    items: list[WbSimilarItemRD] = []
+
+    @classmethod
+    async def get(
+        cls,
+        redis: Redis,
+        wb_item_id: int,
+    ) -> "WbBrowserSimilarCacheRD | None":
+        data = await cls._get_raw(redis, wb_item_id)
+        return msgspec.msgpack.decode(data, type=cls) if data else None
+
+    async def save(self, redis: Redis) -> None:
+        await self._save_raw(redis, self.wb_item_id, ttl=_WB_BROWSER_SIMILAR_TTL)
 
 
 # ─── WorkerStateRD ────────────────────────────────────────────────────────────

@@ -7,6 +7,13 @@ from sqlalchemy import URL
 load_dotenv()
 
 
+def _parse_similar_provider() -> str:
+    value = os.environ.get("WB_SIMILAR_PROVIDER", "api").strip().lower()
+    if value in {"api", "browser", "auto"}:
+        return value
+    return "api"
+
+
 class RedisSettings:
     def __init__(self) -> None:
         self.host = os.environ.get("REDIS_HOST", "localhost")
@@ -36,6 +43,7 @@ class Settings:
         "AGENTPLATFORM_BASE_URL",
         "https://litellm.tokengate.ru/v1",
     )
+    wb_similar_provider: str = _parse_similar_provider()
 
     psql: PostgresSettings = PostgresSettings()
     redis: RedisSettings = RedisSettings()
