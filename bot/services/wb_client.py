@@ -600,6 +600,7 @@ async def _search_similar_all_sources(
         enforce_gender: bool,
         min_relevance: int,
         required_anchor_matches_for_pass: int,
+        require_model_tokens: bool,
     ) -> None:
         if len(combined) >= limit:
             return
@@ -614,6 +615,7 @@ async def _search_similar_all_sources(
             base_type_tokens=base_type_tokens,
             base_model_tokens=base_model_tokens,
             required_anchor_matches=required_anchor_matches_for_pass,
+            require_model_tokens=require_model_tokens,
             base_ecosystem=base_ecosystem,
             base_subject_id=base_subject_id,
             min_match_percent=min_match_percent,
@@ -643,6 +645,7 @@ async def _search_similar_all_sources(
             base_type_tokens=base_type_tokens,
             base_model_tokens=base_model_tokens,
             required_anchor_matches=required_anchor_matches_for_pass,
+            require_model_tokens=require_model_tokens,
             base_ecosystem=base_ecosystem,
             base_subject_id=base_subject_id,
             min_match_percent=min_match_percent,
@@ -664,6 +667,7 @@ async def _search_similar_all_sources(
         enforce_gender=True,
         min_relevance=2 if len(base_tokens) >= 3 else 1,
         required_anchor_matches_for_pass=required_anchor_matches,
+        require_model_tokens=True,
     )
     if not combined:
         relaxed_anchor_matches = (
@@ -676,6 +680,7 @@ async def _search_similar_all_sources(
             enforce_gender=False,
             min_relevance=1,
             required_anchor_matches_for_pass=relaxed_anchor_matches,
+            require_model_tokens=True,
         )
     if not combined:
         minimal_anchor_matches = (
@@ -688,6 +693,16 @@ async def _search_similar_all_sources(
             enforce_gender=False,
             min_relevance=0,
             required_anchor_matches_for_pass=minimal_anchor_matches,
+            require_model_tokens=True,
+        )
+
+    if not combined and base_model_tokens:
+        await collect_pass(
+            min_match_percent=minimal_match_percent,
+            enforce_gender=False,
+            min_relevance=0,
+            required_anchor_matches_for_pass=max(0, minimal_anchor_matches - 1),
+            require_model_tokens=False,
         )
 
     combined.sort(key=lambda p: p.price)
@@ -705,6 +720,7 @@ async def _search_similar_with_search(
     base_type_tokens: set[str],
     base_model_tokens: set[str],
     required_anchor_matches: int,
+    require_model_tokens: bool,
     base_ecosystem: str | None,
     base_subject_id: int | None,
     min_match_percent: int,
@@ -776,7 +792,7 @@ async def _search_similar_with_search(
                 candidate_tokens = _characteristic_tokens(candidate_text)
                 if not _is_ecosystem_compatible(base_ecosystem, candidate_tokens):
                     continue
-                if not _model_tokens_compatible(
+                if require_model_tokens and not _model_tokens_compatible(
                     base_model_tokens,
                     candidate_text,
                     candidate_tokens,
@@ -912,6 +928,7 @@ async def _search_similar_with_catalog(
     base_type_tokens: set[str],
     base_model_tokens: set[str],
     required_anchor_matches: int,
+    require_model_tokens: bool,
     base_ecosystem: str | None,
     base_subject_id: int | None,
     min_match_percent: int,
@@ -996,7 +1013,7 @@ async def _search_similar_with_catalog(
                 candidate_tokens = _characteristic_tokens(candidate_text)
                 if not _is_ecosystem_compatible(base_ecosystem, candidate_tokens):
                     continue
-                if not _model_tokens_compatible(
+                if require_model_tokens and not _model_tokens_compatible(
                     base_model_tokens,
                     candidate_text,
                     candidate_tokens,
