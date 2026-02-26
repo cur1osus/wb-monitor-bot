@@ -604,20 +604,27 @@ async def search_similar_cheaper_via_web(
     if not base_core_tokens:
         base_core_tokens = {token for token in base_anchor_tokens if len(token) >= 5}
 
-    # two queries: broad + model-focused
-    q1 = f'site:wildberries.ru {base_title}'
+    # Phrase-first retrieval: exact phrase first, then broaden if needed.
+    phrase = " ".join((base_title or "").split()).strip()
+    q1 = f'site:wildberries.ru "{phrase}"' if phrase else ""
     model_part = " ".join(sorted(base_model_tokens))
-    q2 = f'site:wildberries.ru {base_title} {model_part}'.strip()
+    q2 = (
+        f'site:wildberries.ru "{phrase}" {model_part}'.strip()
+        if phrase
+        else f"site:wildberries.ru {model_part}".strip()
+    )
+    q3 = f"site:wildberries.ru {base_title}".strip()
 
     async with ClientSession(headers=WB_HTTP_HEADERS) as session:
-        ids1, ids2 = await asyncio.gather(
+        ids1, ids2, ids3 = await asyncio.gather(
             _web_search_candidate_ids(session, query_text=q1, limit=candidate_limit),
             _web_search_candidate_ids(session, query_text=q2, limit=candidate_limit),
+            _web_search_candidate_ids(session, query_text=q3, limit=max(10, candidate_limit // 2)),
         )
 
     ordered_ids: list[int] = []
     seen: set[int] = set()
-    for nm in ids1 + ids2:
+    for nm in ids1 + ids2 + ids3:
         if nm == exclude_wb_item_id or nm in seen:
             continue
         seen.add(nm)
