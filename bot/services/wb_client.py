@@ -703,9 +703,13 @@ async def search_similar_cheaper_title_only(
         return []
 
     min_match_percent = _normalize_match_percent(match_percent_threshold)
+    core_tokens = [token for token in _tokenize(base_title) if len(token) >= 4]
+    core_title = " ".join(core_tokens[:6])
 
     async def run(s: ClientSession) -> list[WbSimilarProduct]:
-        return await _search_similar_with_search(
+        expanded_limit = max(limit * 3, 12)
+
+        full = await _search_similar_with_search(
             s,
             base_title=base_title,
             base_gender=None,
@@ -722,9 +726,43 @@ async def search_similar_cheaper_title_only(
             enforce_gender=False,
             max_price=max_price,
             exclude_wb_item_id=exclude_wb_item_id,
-            limit=limit,
+            limit=expanded_limit,
             skip_ids=set(),
         )
+
+        compact: list[WbSimilarProduct] = []
+        if core_title and core_title != base_title:
+            compact = await _search_similar_with_search(
+                s,
+                base_title=core_title,
+                base_gender=None,
+                base_tokens=base_tokens,
+                base_brand_tokens=set(),
+                base_anchor_tokens=set(),
+                base_type_tokens=set(),
+                base_model_tokens=set(),
+                required_anchor_matches=0,
+                require_model_tokens=False,
+                base_ecosystem=None,
+                base_subject_id=None,
+                min_match_percent=max(10, min_match_percent - 10),
+                enforce_gender=False,
+                max_price=max_price,
+                exclude_wb_item_id=exclude_wb_item_id,
+                limit=expanded_limit,
+                skip_ids={item.wb_item_id for item in full},
+            )
+
+        merged: list[WbSimilarProduct] = []
+        seen_ids: set[int] = set()
+        for item in full + compact:
+            if item.wb_item_id in seen_ids:
+                continue
+            seen_ids.add(item.wb_item_id)
+            merged.append(item)
+
+        merged.sort(key=lambda p: p.price)
+        return merged[:limit]
 
     if session is None:
         async with ClientSession(headers=WB_HTTP_HEADERS) as new_session:
