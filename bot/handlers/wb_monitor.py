@@ -89,7 +89,6 @@ from bot.services.wb_client import (
     extract_wb_item_id,
     fetch_product,
     search_similar_cheaper,
-    search_similar_cheaper_via_web,
 )
 from bot.settings import se
 
@@ -746,21 +745,6 @@ async def wb_find_cheaper_cb(
                     max_price=current.price,
                     exclude_wb_item_id=track.wb_item_id,
                     limit=12,
-                )
-
-            # Web-search fallback (site:wildberries.ru) when API candidates are empty.
-            if not found:
-                found = await search_similar_cheaper_via_web(
-                    redis=redis,
-                    base_title=current.title or track.title,
-                    base_entity=current.entity,
-                    base_brand=current.brand,
-                    base_subject_id=current.subject_id,
-                    match_percent_threshold=max(15, int(cfg.cheap_match_percent) - 10),
-                    max_price=current.price,
-                    exclude_wb_item_id=track.wb_item_id,
-                    limit=12,
-                    candidate_limit=40,
                 )
 
             reranked = found[:5]
