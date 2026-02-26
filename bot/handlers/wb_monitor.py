@@ -1385,12 +1385,15 @@ async def wb_admin_grant_pro_msg(
     await MonitorUserRD.invalidate(redis, user.tg_user_id)
 
     await state.clear()
+    stats = await get_admin_stats(session, days=7)
     await msg.answer(
         tx.ADMIN_GRANT_PRO_DONE.format(
             tg_user_id=user.tg_user_id,
             days=days,
             expires=user.pro_expires_at.strftime("%d.%m.%Y %H:%M"),
-        ),
+        )
+        + "\n\n"
+        + _admin_stats_text(stats),
         reply_markup=admin_panel_kb(selected_days=7),
     )
 
