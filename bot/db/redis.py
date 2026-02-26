@@ -193,3 +193,36 @@ class WorkerStateRD(_RDBase):
         state = await cls.get(redis) or cls()
         state.cycle_sec = sec
         await state.save(redis)
+
+
+# ─── WbReviewInsightsCacheRD ──────────────────────────────────────────────────
+_WB_REVIEW_INSIGHTS_TTL: Final[int] = int(timedelta(hours=24).total_seconds())
+
+
+class WbReviewInsightsCacheRD(_RDBase):
+    """Кэш результата LLM-анализа отзывов. TTL 24 часа."""
+
+    wb_item_id: int
+    model_signature: str
+    strengths: list[str] = []
+    weaknesses: list[str] = []
+    positive_samples: int = 0
+    negative_samples: int = 0
+
+    @classmethod
+    async def get(
+        cls,
+        redis: Redis,
+        wb_item_id: int,
+        model_signature: str,
+    ) -> "WbReviewInsightsCacheRD | None":
+        data = await cls._get_raw(redis, wb_item_id, model_signature)
+        return msgspec.msgpack.decode(data, type=cls) if data else None
+
+    async def save(self, redis: Redis) -> None:
+        await self._save_raw(
+            redis,
+            self.wb_item_id,
+            self.model_signature,
+            ttl=_WB_REVIEW_INSIGHTS_TTL,
+        )

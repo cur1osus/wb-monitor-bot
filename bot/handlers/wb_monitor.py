@@ -22,7 +22,12 @@ from aiogram.types import (
 from sqlalchemy import select
 
 from bot.db.models import TrackModel
-from bot.db.redis import MonitorUserRD, WbSimilarItemRD, WbSimilarSearchCacheRD
+from bot.db.redis import (
+    MonitorUserRD,
+    WbReviewInsightsCacheRD,
+    WbSimilarItemRD,
+    WbSimilarSearchCacheRD,
+)
 from bot.keyboards.inline import (
     add_item_prompt_kb,
     back_to_dashboard_kb,
@@ -462,6 +467,7 @@ async def wb_find_cheaper_cb(
 async def wb_reviews_analysis_cb(
     cb: CallbackQuery,
     session: AsyncSession,
+    redis: "Redis",
 ) -> None:
     track_id = int(cb.data.split(":")[2])
     track = await get_user_track_by_id(session, track_id)
@@ -484,14 +490,43 @@ async def wb_reviews_analysis_cb(
         reply_markup=back_kb,
     )
 
+    model_signature = ",".join(
+        [
+            se.groq_model.strip(),
+            *[m.strip() for m in se.groq_fallback_models if m.strip()],
+        ]
+    )
+
+    cached = await WbReviewInsightsCacheRD.get(
+        redis,
+        track.wb_item_id,
+        model_signature,
+    )
+
     try:
-        insights = await analyze_reviews_with_groq(
-            wb_item_id=track.wb_item_id,
-            product_title=track.title,
-            groq_api_key=se.groq_api_key,
-            groq_model=se.groq_model,
-            groq_fallback_models=se.groq_fallback_models,
-        )
+        if cached is not None:
+            insights = ReviewInsights(
+                strengths=list(cached.strengths),
+                weaknesses=list(cached.weaknesses),
+                positive_samples=cached.positive_samples,
+                negative_samples=cached.negative_samples,
+            )
+        else:
+            insights = await analyze_reviews_with_groq(
+                wb_item_id=track.wb_item_id,
+                product_title=track.title,
+                groq_api_key=se.groq_api_key,
+                groq_model=se.groq_model,
+                groq_fallback_models=se.groq_fallback_models,
+            )
+            await WbReviewInsightsCacheRD(
+                wb_item_id=track.wb_item_id,
+                model_signature=model_signature,
+                strengths=list(insights.strengths),
+                weaknesses=list(insights.weaknesses),
+                positive_samples=insights.positive_samples,
+                negative_samples=insights.negative_samples,
+            ).save(redis)
     except ReviewAnalysisConfigError as exc:
         await cb.message.edit_text(f"❌ {escape(str(exc))}", reply_markup=back_kb)
         return
