@@ -162,6 +162,11 @@ _MENU_CACHE_TS = 0.0
 WB_HTTP_PROXY = os.environ.get("WB_HTTP_PROXY", "").strip() or None
 _MORPH = MorphAnalyzer() if MorphAnalyzer is not None else None
 
+_WEB_SEARCH_URL = "https://duckduckgo.com/html/?q={query}"
+_WEB_ID_RE = re.compile(r"/catalog/(\d{6,15})/detail\.aspx", re.IGNORECASE)
+_WEB_MAX_CANDIDATES = 40
+_WEB_FETCH_CONCURRENCY = 8
+
 
 @dataclass
 class WbProductSnapshot:
@@ -526,6 +531,138 @@ async def fetch_product(
         async with ClientSession(headers=WB_HTTP_HEADERS) as new_session:
             return await _fetch_and_cache(new_session, redis, url, wb_item_id)
     return await _fetch_and_cache(session, redis, url, wb_item_id)
+
+
+def _extract_web_candidate_ids(html_text: str) -> list[int]:
+    out: list[int] = []
+    seen: set[int] = set()
+    for m in _WEB_ID_RE.finditer(html_text or ""):
+        try:
+            nm = int(m.group(1))
+        except Exception:
+            continue
+        if nm in seen:
+            continue
+        seen.add(nm)
+        out.append(nm)
+    return out
+
+
+async def _web_search_candidate_ids(
+    session: ClientSession,
+    *,
+    query_text: str,
+    limit: int = _WEB_MAX_CANDIDATES,
+) -> list[int]:
+    q = quote_plus(query_text.strip())
+    if not q:
+        return []
+    url = _WEB_SEARCH_URL.format(query=q)
+    try:
+        async with session.get(url, timeout=12, proxy=WB_HTTP_PROXY) as resp:
+            if resp.status != 200:
+                return []
+            html_text = await resp.text()
+    except Exception:
+        return []
+    ids = _extract_web_candidate_ids(html_text)
+    return ids[: max(1, limit)]
+
+
+async def search_similar_cheaper_via_web(
+    *,
+    redis: "Redis",
+    base_title: str,
+    max_price: Decimal,
+    exclude_wb_item_id: int,
+    base_entity: str | None = None,
+    base_brand: str | None = None,
+    base_subject_id: int | None = None,
+    match_percent_threshold: int | None = None,
+    limit: int = 5,
+    candidate_limit: int = _WEB_MAX_CANDIDATES,
+) -> list[WbSimilarProduct]:
+    base_text = f"{base_title} {base_entity or ''}"
+    base_tokens = _characteristic_tokens(base_text)
+    if not base_tokens:
+        return []
+
+    base_brand_tokens = set(_tokenize(base_brand or ""))
+    base_anchor_tokens = _anchor_tokens(base_tokens)
+    base_type_tokens = {token for token in base_tokens if token in _TYPE_TOKENS}
+    base_model_tokens = _extract_model_tokens(base_text)
+    base_ecosystem = _detect_ecosystem(base_tokens)
+    required_anchor_matches = _required_anchor_matches(base_anchor_tokens)
+    min_match_percent = _normalize_match_percent(match_percent_threshold)
+
+    # two queries: broad + model-focused
+    q1 = f'site:wildberries.ru {base_title}'
+    model_part = " ".join(sorted(base_model_tokens))
+    q2 = f'site:wildberries.ru {base_title} {model_part}'.strip()
+
+    async with ClientSession(headers=WB_HTTP_HEADERS) as session:
+        ids1, ids2 = await asyncio.gather(
+            _web_search_candidate_ids(session, query_text=q1, limit=candidate_limit),
+            _web_search_candidate_ids(session, query_text=q2, limit=candidate_limit),
+        )
+
+    ordered_ids: list[int] = []
+    seen: set[int] = set()
+    for nm in ids1 + ids2:
+        if nm == exclude_wb_item_id or nm in seen:
+            continue
+        seen.add(nm)
+        ordered_ids.append(nm)
+    ordered_ids = ordered_ids[: max(limit * 6, candidate_limit)]
+
+    sem = asyncio.Semaphore(_WEB_FETCH_CONCURRENCY)
+
+    async def load(nm_id: int) -> tuple[int, WbProductSnapshot | None]:
+        async with sem:
+            try:
+                p = await fetch_product(redis, nm_id, use_cache=True)
+            except Exception:
+                p = None
+            return nm_id, p
+
+    snapshots = await asyncio.gather(*(load(nm) for nm in ordered_ids))
+
+    candidates: list[WbSimilarProduct] = []
+    for nm_id, snap in snapshots:
+        if snap is None or snap.price is None or snap.price >= max_price:
+            continue
+        if base_subject_id is not None and snap.subject_id is not None and snap.subject_id != base_subject_id:
+            continue
+
+        candidate_text = f"{snap.title} {snap.entity or ''}"
+        candidate_tokens = _characteristic_tokens(candidate_text)
+
+        if not _is_ecosystem_compatible(base_ecosystem, candidate_tokens):
+            continue
+        if base_model_tokens and not _model_tokens_compatible(base_model_tokens, candidate_text, candidate_tokens):
+            continue
+        if base_brand_tokens:
+            cand_brand_tokens = set(_tokenize(snap.brand or ""))
+            if cand_brand_tokens and _match_count(base_brand_tokens, cand_brand_tokens) == 0:
+                continue
+        if required_anchor_matches > 0 and _match_count(base_anchor_tokens, candidate_tokens) < required_anchor_matches:
+            continue
+        if base_type_tokens and _match_count(base_type_tokens, candidate_tokens) == 0:
+            continue
+        if min_match_percent > 0 and _match_percent(base_tokens, candidate_tokens) < min_match_percent:
+            continue
+
+        candidates.append(
+            WbSimilarProduct(
+                wb_item_id=nm_id,
+                title=snap.title,
+                price=snap.price,
+                url=f"https://www.wildberries.ru/catalog/{nm_id}/detail.aspx",
+            )
+        )
+
+    candidates.sort(key=lambda p: p.price)
+    return candidates[:limit]
 
 
 async def search_similar_cheaper(
