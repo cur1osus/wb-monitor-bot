@@ -309,6 +309,44 @@ def admin_promo_kb() -> InlineKeyboardMarkup:
     )
 
 
+def admin_promo_list_kb(
+    items: list[tuple[int, str]],
+    *,
+    page: int,
+    total_pages: int,
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = [
+        [_btn(label, f"wbm:admin:promo:item:{promo_id}:{page}")]
+        for promo_id, label in items
+    ]
+
+    nav: list[InlineKeyboardButton] = []
+    if page > 0:
+        nav.append(_btn("⬅️", f"wbm:admin:promo:list:{page - 1}"))
+    nav.append(_btn(f"{page + 1} / {total_pages}", "wbm:noop:0"))
+    if page < total_pages - 1:
+        nav.append(_btn("➡️", f"wbm:admin:promo:list:{page + 1}"))
+    rows.append(nav)
+
+    rows.append([_btn(tx.BTN_BACK, "wbm:admin:promo")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def admin_promo_card_kb(*, promo_id: int, page: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                _btn(
+                    tx.BTN_ADMIN_PROMO_DEACTIVATE,
+                    f"wbm:admin:promo:off:{promo_id}:{page}",
+                    style="danger",
+                )
+            ],
+            [_btn(tx.BTN_BACK, f"wbm:admin:promo:list:{page}")],
+        ]
+    )
+
+
 def admin_promo_input_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[[_btn(tx.BTN_BACK, "wbm:admin:promo")]]

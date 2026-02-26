@@ -219,16 +219,6 @@ async def get_promo_by_code(
     )
 
 
-async def get_promo_by_code_any(
-    session: AsyncSession,
-    *,
-    code: str,
-) -> PromoLinkModel | None:
-    return await session.scalar(
-        select(PromoLinkModel).where(PromoLinkModel.code == code)
-    )
-
-
 async def deactivate_promo_link(
     session: AsyncSession,
     *,
@@ -240,6 +230,55 @@ async def deactivate_promo_link(
         .values(is_active=False)
     )
     return bool(result.rowcount)
+
+
+async def count_active_promos(session: AsyncSession, *, now: datetime) -> int:
+    count = await session.scalar(
+        select(func.count(PromoLinkModel.id)).where(
+            PromoLinkModel.is_active.is_(True),
+            PromoLinkModel.expires_at >= now,
+        )
+    )
+    return int(count or 0)
+
+
+async def get_active_promos_page(
+    session: AsyncSession,
+    *,
+    now: datetime,
+    limit: int,
+    offset: int,
+) -> list[PromoLinkModel]:
+    rows = await session.scalars(
+        select(PromoLinkModel)
+        .where(
+            PromoLinkModel.is_active.is_(True),
+            PromoLinkModel.expires_at >= now,
+        )
+        .order_by(PromoLinkModel.expires_at.asc(), PromoLinkModel.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    return list(rows)
+
+
+async def get_promo_by_id(
+    session: AsyncSession,
+    *,
+    promo_id: int,
+) -> PromoLinkModel | None:
+    return await session.scalar(
+        select(PromoLinkModel).where(PromoLinkModel.id == promo_id)
+    )
+
+
+async def count_promo_activations(session: AsyncSession, *, promo_id: int) -> int:
+    count = await session.scalar(
+        select(func.count(PromoActivationModel.id)).where(
+            PromoActivationModel.promo_id == promo_id
+        )
+    )
+    return int(count or 0)
 
 
 async def get_promo_activation(

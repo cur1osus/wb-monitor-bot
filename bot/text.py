@@ -208,6 +208,29 @@ ADMIN_PROMO_DISCOUNT_PROMPT = (
 ADMIN_PROMO_DEACTIVATE_PROMPT = (
     "⛔ Отправьте промо-код или полную ссылку, которую нужно деактивировать."
 )
+ADMIN_PROMO_DEACTIVATE_LIST = (
+    "⛔ <b>Деактивация промо ссылок</b>\n\nВыберите активную ссылку из списка."
+)
+ADMIN_PROMO_DEACTIVATE_EMPTY = "ℹ️ Сейчас нет активных промо ссылок."
+ADMIN_PROMO_CARD = (
+    "🎟 <b>Промо ссылка</b>\n\n"
+    "Тип: <b>{kind}</b>\n"
+    "Значение: <b>{value}</b>\n"
+    "Статус: <b>{status}</b>\n"
+    "Активаций: <b>{activations}</b>\n"
+    "Создана: <b>{created}</b>\n"
+    "Действует до: <b>{expires}</b>\n\n"
+    "Ссылка:\n<code>{link}</code>"
+)
+ADMIN_PROMO_KIND_PRO_DAYS = "PRO дни"
+ADMIN_PROMO_KIND_DISCOUNT = "Скидка на PRO"
+ADMIN_PROMO_KIND_UNKNOWN = "Промо"
+ADMIN_PROMO_STATUS_ACTIVE = "активна"
+ADMIN_PROMO_STATUS_EXPIRED = "истек срок"
+ADMIN_PROMO_VALUE_DAYS = "{value} дн."
+ADMIN_PROMO_VALUE_PERCENT = "{value}%"
+ADMIN_PROMO_VALUE_RAW = "{value}"
+ADMIN_PROMO_LIST_ITEM = "{kind} {value} · до {expires}"
 ADMIN_FREE_INT_ERROR = "❌ Введите целое число от 5 до 1440."
 ADMIN_FREE_RANGE_ERROR = "❌ Значение вне диапазона: 5..1440"
 ADMIN_PRO_INT_ERROR = "❌ Введите целое число от 1 до 1440."

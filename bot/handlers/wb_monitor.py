@@ -34,8 +34,10 @@ from bot.db.redis import (
 from bot import text as tx
 from bot.keyboards.inline import (
     add_item_prompt_kb,
+    admin_promo_card_kb,
     admin_promo_input_kb,
     admin_promo_kb,
+    admin_promo_list_kb,
     back_to_dashboard_kb,
     dashboard_kb,
     dashboard_text,
@@ -51,13 +53,16 @@ from bot.keyboards.inline import (
 )
 from bot.services.repository import (
     ActiveDiscount,
+    count_active_promos,
+    count_promo_activations,
     create_promo_link,
     count_user_tracks,
     deactivate_promo_link,
+    get_active_promos_page,
     create_track,
     get_user_active_discount,
     get_or_create_monitor_user,
-    get_promo_by_code_any,
+    get_promo_by_id,
     get_user_track_by_id,
     get_user_tracks,
     mark_discount_activation_consumed,
@@ -96,7 +101,7 @@ if TYPE_CHECKING:
 router = Router()
 logger = logging.getLogger(__name__)
 _LIKELY_WB_INPUT_RE = re.compile(r"wildberries|wb\.ru|\d{6,15}", re.IGNORECASE)
-_PROMO_CODE_RE = re.compile(r"^[A-Za-z0-9_-]{16,96}$")
+_ADMIN_PROMO_PAGE_SIZE = 8
 
 
 def _model_signature(model: str, review_limit: int) -> str:
@@ -136,23 +141,84 @@ def _parse_promo_create_payload(text: str) -> tuple[int, int] | None:
     return first, second
 
 
-def _parse_admin_promo_code_payload(text: str) -> str | None:
-    payload = text.strip()
-    if not payload:
-        return None
+def _promo_kind_text(kind: str) -> str:
+    if kind == "pro_days":
+        return tx.ADMIN_PROMO_KIND_PRO_DAYS
+    if kind == "pro_discount":
+        return tx.ADMIN_PROMO_KIND_DISCOUNT
+    return tx.ADMIN_PROMO_KIND_UNKNOWN
 
-    if "start=promo_" in payload:
-        payload = payload.split("start=promo_", 1)[1]
-    elif payload.startswith("/start "):
-        payload = payload.split(maxsplit=1)[1]
 
-    if payload.startswith("promo_"):
-        payload = payload[6:]
+def _promo_value_text(kind: str, value: int) -> str:
+    if kind == "pro_days":
+        return tx.ADMIN_PROMO_VALUE_DAYS.format(value=value)
+    if kind == "pro_discount":
+        return tx.ADMIN_PROMO_VALUE_PERCENT.format(value=value)
+    return tx.ADMIN_PROMO_VALUE_RAW.format(value=value)
 
-    code = payload.split("&", 1)[0].split("#", 1)[0].strip()
-    if not _PROMO_CODE_RE.fullmatch(code):
-        return None
-    return code
+
+def _promo_list_item_text(promo: object) -> str:
+    return tx.ADMIN_PROMO_LIST_ITEM.format(
+        kind="🎁" if getattr(promo, "kind") == "pro_days" else "💸",
+        value=_promo_value_text(getattr(promo, "kind"), int(getattr(promo, "value"))),
+        expires=getattr(promo, "expires_at").strftime("%d.%m %H:%M"),
+    )
+
+
+async def _show_admin_promo_list(
+    message: Message,
+    *,
+    session: AsyncSession,
+    page: int,
+) -> None:
+    now = datetime.now(UTC).replace(tzinfo=None)
+    total = await count_active_promos(session, now=now)
+    if total <= 0:
+        await message.edit_text(
+            tx.ADMIN_PROMO_DEACTIVATE_EMPTY,
+            reply_markup=admin_promo_kb(),
+        )
+        return
+
+    total_pages = (total + _ADMIN_PROMO_PAGE_SIZE - 1) // _ADMIN_PROMO_PAGE_SIZE
+    safe_page = min(max(0, page), total_pages - 1)
+
+    promos = await get_active_promos_page(
+        session,
+        now=now,
+        limit=_ADMIN_PROMO_PAGE_SIZE,
+        offset=safe_page * _ADMIN_PROMO_PAGE_SIZE,
+    )
+    items = [(promo.id, _promo_list_item_text(promo)) for promo in promos]
+
+    await message.edit_text(
+        tx.ADMIN_PROMO_DEACTIVATE_LIST,
+        reply_markup=admin_promo_list_kb(
+            items,
+            page=safe_page,
+            total_pages=total_pages,
+        ),
+    )
+
+
+def _promo_card_text(*, promo: object, activations: int, bot_username: str) -> str:
+    expires_at = getattr(promo, "expires_at")
+    now = datetime.now(UTC).replace(tzinfo=None)
+    status = (
+        tx.ADMIN_PROMO_STATUS_ACTIVE
+        if expires_at >= now and getattr(promo, "is_active")
+        else tx.ADMIN_PROMO_STATUS_EXPIRED
+    )
+    link = f"https://t.me/{bot_username}?start=promo_{getattr(promo, 'code')}"
+    return tx.ADMIN_PROMO_CARD.format(
+        kind=_promo_kind_text(getattr(promo, "kind")),
+        value=_promo_value_text(getattr(promo, "kind"), int(getattr(promo, "value"))),
+        status=status,
+        activations=activations,
+        created=getattr(promo, "created_at").strftime("%d.%m.%Y %H:%M"),
+        expires=expires_at.strftime("%d.%m.%Y %H:%M"),
+        link=escape(link),
+    )
 
 
 def _pay_button_text(discount: ActiveDiscount | None) -> str:
@@ -259,7 +325,6 @@ class SettingsState(StatesGroup):
     waiting_for_analysis_model = State()
     waiting_for_promo_pro = State()
     waiting_for_promo_discount = State()
-    waiting_for_promo_deactivate = State()
 
 
 @router.callback_query(F.data == "wbm:home:0")
@@ -1151,16 +1216,97 @@ async def wb_admin_promo_discount_cb(cb: CallbackQuery, state: FSMContext) -> No
 
 
 @router.callback_query(F.data == "wbm:admin:promo:deactivate")
-async def wb_admin_promo_deactivate_cb(cb: CallbackQuery, state: FSMContext) -> None:
+async def wb_admin_promo_deactivate_cb(
+    cb: CallbackQuery,
+    state: FSMContext,
+    session: AsyncSession,
+) -> None:
     if not is_admin(cb.from_user.id, se):
         await cb.answer(tx.NO_ACCESS, show_alert=True)
         return
 
-    await state.set_state(SettingsState.waiting_for_promo_deactivate)
+    await state.clear()
+    await _show_admin_promo_list(cb.message, session=session, page=0)
+
+
+@router.callback_query(F.data.regexp(r"wbm:admin:promo:list:(\d+)"))
+async def wb_admin_promo_list_cb(
+    cb: CallbackQuery,
+    session: AsyncSession,
+    state: FSMContext,
+) -> None:
+    if not is_admin(cb.from_user.id, se):
+        await cb.answer(tx.NO_ACCESS, show_alert=True)
+        return
+
+    await state.clear()
+    page = int(cb.data.split(":")[4])
+    await _show_admin_promo_list(cb.message, session=session, page=page)
+
+
+@router.callback_query(F.data.regexp(r"wbm:admin:promo:item:(\d+):(\d+)"))
+async def wb_admin_promo_item_cb(
+    cb: CallbackQuery,
+    session: AsyncSession,
+    state: FSMContext,
+) -> None:
+    if not is_admin(cb.from_user.id, se):
+        await cb.answer(tx.NO_ACCESS, show_alert=True)
+        return
+
+    await state.clear()
+    parts = cb.data.split(":")
+    promo_id = int(parts[4])
+    page = int(parts[5])
+
+    promo = await get_promo_by_id(session, promo_id=promo_id)
+    if promo is None or not promo.is_active:
+        await cb.answer(tx.ADMIN_PROMO_DEACTIVATE_NOT_FOUND, show_alert=True)
+        await _show_admin_promo_list(cb.message, session=session, page=page)
+        return
+
+    activations = await count_promo_activations(session, promo_id=promo.id)
+    bot_me = await cb.bot.me()
     await cb.message.edit_text(
-        tx.ADMIN_PROMO_DEACTIVATE_PROMPT,
-        reply_markup=admin_promo_input_kb(),
+        _promo_card_text(
+            promo=promo,
+            activations=activations,
+            bot_username=bot_me.username,
+        ),
+        reply_markup=admin_promo_card_kb(promo_id=promo.id, page=page),
     )
+
+
+@router.callback_query(F.data.regexp(r"wbm:admin:promo:off:(\d+):(\d+)"))
+async def wb_admin_promo_off_cb(
+    cb: CallbackQuery,
+    session: AsyncSession,
+    state: FSMContext,
+) -> None:
+    if not is_admin(cb.from_user.id, se):
+        await cb.answer(tx.NO_ACCESS, show_alert=True)
+        return
+
+    await state.clear()
+    parts = cb.data.split(":")
+    promo_id = int(parts[4])
+    page = int(parts[5])
+
+    promo = await get_promo_by_id(session, promo_id=promo_id)
+    if promo is None or not promo.is_active:
+        await cb.answer(tx.ADMIN_PROMO_DEACTIVATE_NOT_FOUND, show_alert=True)
+        await _show_admin_promo_list(cb.message, session=session, page=page)
+        return
+
+    changed = await deactivate_promo_link(session, promo_id=promo.id)
+    await session.commit()
+
+    if changed:
+        await cb.answer("✅ Промо ссылка деактивирована.")
+    else:
+        await cb.answer(tx.ADMIN_PROMO_DEACTIVATE_ALREADY, show_alert=True)
+
+    await _show_admin_promo_list(cb.message, session=session, page=page)
 
 
 @router.callback_query(F.data == "wbm:admin:cfg:free")
@@ -1562,55 +1708,6 @@ async def wb_admin_promo_discount_msg(
             percent=discount_percent,
             expires=expires_at.strftime("%d.%m.%Y %H:%M"),
         ),
-        reply_markup=admin_promo_kb(),
-    )
-
-
-@router.message(SettingsState.waiting_for_promo_deactivate, F.text)
-async def wb_admin_promo_deactivate_msg(
-    msg: Message,
-    state: FSMContext,
-    session: AsyncSession,
-) -> None:
-    if not msg.from_user or not is_admin(msg.from_user.id, se):
-        await state.clear()
-        return
-
-    code = _parse_admin_promo_code_payload(msg.text)
-    if code is None:
-        await msg.answer(
-            tx.ADMIN_PROMO_DEACTIVATE_FORMAT_ERROR,
-            reply_markup=admin_promo_input_kb(),
-        )
-        return
-
-    promo = await get_promo_by_code_any(session, code=code)
-    if promo is None:
-        await msg.answer(
-            tx.ADMIN_PROMO_DEACTIVATE_NOT_FOUND,
-            reply_markup=admin_promo_input_kb(),
-        )
-        return
-
-    if not promo.is_active:
-        await state.clear()
-        await msg.answer(
-            tx.ADMIN_PROMO_DEACTIVATE_ALREADY, reply_markup=admin_promo_kb()
-        )
-        return
-
-    changed = await deactivate_promo_link(session, promo_id=promo.id)
-    await session.commit()
-    await state.clear()
-
-    if not changed:
-        await msg.answer(
-            tx.ADMIN_PROMO_DEACTIVATE_ALREADY, reply_markup=admin_promo_kb()
-        )
-        return
-
-    await msg.answer(
-        tx.ADMIN_PROMO_DEACTIVATED.format(code=escape(code)),
         reply_markup=admin_promo_kb(),
     )
 
