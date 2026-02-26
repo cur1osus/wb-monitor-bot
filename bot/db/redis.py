@@ -208,6 +208,9 @@ class WbReviewInsightsCacheRD(_RDBase):
     weaknesses: list[str] = []
     positive_samples: int = 0
     negative_samples: int = 0
+    positive_total: int = 0
+    negative_total: int = 0
+    sample_limit_per_side: int = 50
 
     @classmethod
     async def get(

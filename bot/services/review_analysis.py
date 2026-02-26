@@ -13,7 +13,7 @@ from bot.services.wb_client import WB_HTTP_HEADERS, WB_HTTP_PROXY
 
 _GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 _MIN_DETAILED_REVIEW_LEN = 80
-_MAX_PROMPT_REVIEWS_PER_SIDE = 25
+_MAX_PROMPT_REVIEWS_PER_SIDE = 50
 _MAX_REVIEW_TEXT_LEN = 700
 _MAX_QUALITY_LEN = 180
 logger = logging.getLogger(__name__)
@@ -44,6 +44,9 @@ class ReviewInsights:
     weaknesses: list[str]
     positive_samples: int
     negative_samples: int
+    positive_total: int = 0
+    negative_total: int = 0
+    sample_limit_per_side: int = _MAX_PROMPT_REVIEWS_PER_SIDE
 
 
 @dataclass(slots=True)
@@ -76,6 +79,10 @@ async def analyze_reviews_with_groq(
 
     feedbacks = await _fetch_feedbacks_for_item(wb_item_id)
     positive, negative = _collect_detailed_reviews(feedbacks)
+    positive_total = len(positive)
+    negative_total = len(negative)
+    positive_for_prompt = positive[:_MAX_PROMPT_REVIEWS_PER_SIDE]
+    negative_for_prompt = negative[:_MAX_PROMPT_REVIEWS_PER_SIDE]
 
     if not positive and not negative:
         raise ReviewAnalysisError(tx.REVIEW_ANALYSIS_NO_DETAILED)
@@ -83,12 +90,10 @@ async def analyze_reviews_with_groq(
     prompt_payload = {
         "product_title": product_title,
         "positive_reviews": [
-            _serialize_review(sample)
-            for sample in positive[:_MAX_PROMPT_REVIEWS_PER_SIDE]
+            _serialize_review(sample) for sample in positive_for_prompt
         ],
         "negative_reviews": [
-            _serialize_review(sample)
-            for sample in negative[:_MAX_PROMPT_REVIEWS_PER_SIDE]
+            _serialize_review(sample) for sample in negative_for_prompt
         ],
         "task": tx.REVIEW_ANALYSIS_TASK_PROMPT,
     }
@@ -103,8 +108,11 @@ async def analyze_reviews_with_groq(
     return ReviewInsights(
         strengths=result["strengths"],
         weaknesses=result["weaknesses"],
-        positive_samples=len(positive),
-        negative_samples=len(negative),
+        positive_samples=len(positive_for_prompt),
+        negative_samples=len(negative_for_prompt),
+        positive_total=positive_total,
+        negative_total=negative_total,
+        sample_limit_per_side=_MAX_PROMPT_REVIEWS_PER_SIDE,
     )
 
 

@@ -280,14 +280,41 @@ REVIEW_ANALYSIS_USER_PROMPT_PREFIX = (
 )
 TIME_SECONDS_SUFFIX = "сек"
 TIME_MINUTES_SUFFIX = "мин"
+REVIEW_ANALYSIS_SAMPLES_LINE = (
+    "<blockquote>Развернутых отзывов (взято/всего): "
+    "+{pos_used}/{pos_total} / -{neg_used}/{neg_total}</blockquote>"
+)
+REVIEW_ANALYSIS_LIMIT_NOTE_BOTH = (
+    "ℹ️ Для анализа взято не более {limit} положительных "
+    "и {limit} отрицательных отзывов."
+)
+REVIEW_ANALYSIS_LIMIT_NOTE_POS = (
+    "ℹ️ Для анализа взято не более {limit} положительных отзывов."
+)
+REVIEW_ANALYSIS_LIMIT_NOTE_NEG = (
+    "ℹ️ Для анализа взято не более {limit} отрицательных отзывов."
+)
 
 
 def review_insights_text(track_title: str, insights: "ReviewInsights") -> str:
+    pos_used = max(0, int(getattr(insights, "positive_samples", 0)))
+    neg_used = max(0, int(getattr(insights, "negative_samples", 0)))
+    pos_total_raw = int(getattr(insights, "positive_total", 0) or 0)
+    neg_total_raw = int(getattr(insights, "negative_total", 0) or 0)
+    pos_total = max(pos_used, pos_total_raw)
+    neg_total = max(neg_used, neg_total_raw)
+    limit = max(1, int(getattr(insights, "sample_limit_per_side", 50) or 50))
+
+    pos_capped = pos_total > pos_used and pos_used >= limit
+    neg_capped = neg_total > neg_used and neg_used >= limit
+
     lines = [
         f"🧠 <b>Анализ отзывов</b> для <b>{escape(track_title)}</b>",
-        (
-            f"<blockquote>Развернутых отзывов: +{insights.positive_samples} "
-            f"/ -{insights.negative_samples}</blockquote>"
+        REVIEW_ANALYSIS_SAMPLES_LINE.format(
+            pos_used=pos_used,
+            pos_total=pos_total,
+            neg_used=neg_used,
+            neg_total=neg_total,
         ),
         "",
         "✅ <b>Сильные качества:</b>",
@@ -307,6 +334,16 @@ def review_insights_text(track_title: str, insights: "ReviewInsights") -> str:
             lines.append(f"{idx}. {escape(item)}")
     else:
         lines.append("Нет явных повторяющихся минусов в развернутых отзывах.")
+
+    if pos_capped and neg_capped:
+        lines.append("")
+        lines.append(REVIEW_ANALYSIS_LIMIT_NOTE_BOTH.format(limit=limit))
+    elif pos_capped:
+        lines.append("")
+        lines.append(REVIEW_ANALYSIS_LIMIT_NOTE_POS.format(limit=limit))
+    elif neg_capped:
+        lines.append("")
+        lines.append(REVIEW_ANALYSIS_LIMIT_NOTE_NEG.format(limit=limit))
 
     return "\n".join(lines)
 

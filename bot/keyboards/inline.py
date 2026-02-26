@@ -177,7 +177,6 @@ def settings_kb(
     rows.extend(
         [
             [_btn(tx.BTN_BACK, f"wbm:back:{track_id}")],
-            [_btn(tx.SETTINGS_CANCEL_BTN, "wbm:cancel:0", style="danger")],
         ]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)

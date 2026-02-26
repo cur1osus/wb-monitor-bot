@@ -656,6 +656,9 @@ async def wb_reviews_analysis_cb(
                 weaknesses=list(cached.weaknesses),
                 positive_samples=cached.positive_samples,
                 negative_samples=cached.negative_samples,
+                positive_total=cached.positive_total,
+                negative_total=cached.negative_total,
+                sample_limit_per_side=cached.sample_limit_per_side,
             )
         else:
             user = await get_or_create_monitor_user(
@@ -697,6 +700,9 @@ async def wb_reviews_analysis_cb(
                 weaknesses=list(insights.weaknesses),
                 positive_samples=insights.positive_samples,
                 negative_samples=insights.negative_samples,
+                positive_total=insights.positive_total,
+                negative_total=insights.negative_total,
+                sample_limit_per_side=insights.sample_limit_per_side,
             ).save(redis)
     except ReviewAnalysisConfigError as exc:
         await cb.message.edit_text(f"❌ {escape(str(exc))}", reply_markup=back_kb)
