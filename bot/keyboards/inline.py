@@ -102,6 +102,8 @@ def paged_track_kb(
     page: int,
     total: int,
     confirm_remove: bool = False,
+    cheap_btn_text: str | None = None,
+    reviews_btn_text: str | None = None,
 ) -> InlineKeyboardMarkup:
     if track.is_active:
         action_btn = _btn(tx.BTN_PAUSE, f"wbm:pause:{track.id}")
@@ -137,9 +139,12 @@ def paged_track_kb(
                 action_btn,
                 _btn(tx.BTN_SETTINGS, f"wbm:settings:{track.id}"),
             ],
+            [_btn(cheap_btn_text or tx.BTN_FIND_CHEAPER, f"wbm:cheap:{track.id}")],
             [
-                _btn(tx.BTN_FIND_CHEAPER, f"wbm:cheap:{track.id}"),
-                _btn(tx.BTN_REVIEW_ANALYSIS, f"wbm:reviews:{track.id}"),
+                _btn(
+                    reviews_btn_text or tx.BTN_REVIEW_ANALYSIS,
+                    f"wbm:reviews:{track.id}",
+                )
             ],
             nav,
             [_btn(tx.BTN_BACK_MENU, "wbm:home:0")],

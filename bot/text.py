@@ -46,6 +46,7 @@ BTN_REMOVE = "🗑 Удалить"
 BTN_SETTINGS = "⚙️ Настройки"
 BTN_FIND_CHEAPER = "🔎 Найти дешевле"
 BTN_REVIEW_ANALYSIS = "🧠 Анализ отзывов"
+BTN_WITH_USAGE_TEMPLATE = "{title} ({used}/{limit})"
 BTN_TARGET_PRICE = "🎯 Цель цены"
 BTN_DROP_PERCENT = "📉 Падение %"
 BTN_RESET_TARGET = "♻️ Сброс цели"
@@ -344,6 +345,12 @@ def dashboard_text(
         limit=limit,
         interval=interval,
     )
+
+
+def button_with_usage(title: str, *, used: int, limit: int) -> str:
+    safe_used = max(0, used)
+    safe_limit = max(1, limit)
+    return BTN_WITH_USAGE_TEMPLATE.format(title=title, used=safe_used, limit=safe_limit)
 
 
 def format_track_text(track: "TrackModel") -> str:

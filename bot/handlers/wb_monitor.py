@@ -95,6 +95,48 @@ def _format_review_insights_text(track_title: str, insights: ReviewInsights) -> 
     return tx.review_insights_text(track_title, insights)
 
 
+async def _track_kb_with_usage(
+    *,
+    session: AsyncSession,
+    redis: "Redis",
+    user_tg_id: int,
+    user_plan: str,
+    track: TrackModel,
+    page: int,
+    total: int,
+    confirm_remove: bool = False,
+) -> InlineKeyboardMarkup:
+    cfg = runtime_config_view(await get_runtime_config(session))
+    limit = _daily_feature_limit(user_plan, cfg)
+    cheap_used = await FeatureUsageDailyRD.get_used(
+        redis,
+        tg_user_id=user_tg_id,
+        feature="cheap",
+    )
+    reviews_used = await FeatureUsageDailyRD.get_used(
+        redis,
+        tg_user_id=user_tg_id,
+        feature="reviews",
+    )
+
+    return paged_track_kb(
+        track,
+        page,
+        total,
+        confirm_remove=confirm_remove,
+        cheap_btn_text=tx.button_with_usage(
+            tx.BTN_FIND_CHEAPER,
+            used=cheap_used,
+            limit=limit,
+        ),
+        reviews_btn_text=tx.button_with_usage(
+            tx.BTN_REVIEW_ANALYSIS,
+            used=reviews_used,
+            limit=limit,
+        ),
+    )
+
+
 class SettingsState(StatesGroup):
     waiting_for_price = State()
     waiting_for_drop = State()
@@ -252,7 +294,7 @@ async def wb_add_item_from_text(
 
 
 @router.callback_query(F.data == "wbm:list:0")
-async def wb_list_cb(cb: CallbackQuery, session: AsyncSession) -> None:
+async def wb_list_cb(cb: CallbackQuery, session: AsyncSession, redis: "Redis") -> None:
     user = await get_or_create_monitor_user(
         session, cb.from_user.id, cb.from_user.username
     )
@@ -262,12 +304,21 @@ async def wb_list_cb(cb: CallbackQuery, session: AsyncSession) -> None:
         return
     track = tracks[0]
     await cb.message.edit_text(
-        format_track_text(track), reply_markup=paged_track_kb(track, 0, len(tracks))
+        format_track_text(track),
+        reply_markup=await _track_kb_with_usage(
+            session=session,
+            redis=redis,
+            user_tg_id=cb.from_user.id,
+            user_plan=user.plan,
+            track=track,
+            page=0,
+            total=len(tracks),
+        ),
     )
 
 
 @router.callback_query(F.data.regexp(r"wbm:page:(\d+)"))
-async def wb_page_cb(cb: CallbackQuery, session: AsyncSession) -> None:
+async def wb_page_cb(cb: CallbackQuery, session: AsyncSession, redis: "Redis") -> None:
     page = int(cb.data.split(":")[2])
     user = await get_or_create_monitor_user(
         session, cb.from_user.id, cb.from_user.username
@@ -278,12 +329,21 @@ async def wb_page_cb(cb: CallbackQuery, session: AsyncSession) -> None:
         return
     track = tracks[page]
     await cb.message.edit_text(
-        format_track_text(track), reply_markup=paged_track_kb(track, page, len(tracks))
+        format_track_text(track),
+        reply_markup=await _track_kb_with_usage(
+            session=session,
+            redis=redis,
+            user_tg_id=cb.from_user.id,
+            user_plan=user.plan,
+            track=track,
+            page=page,
+            total=len(tracks),
+        ),
     )
 
 
 @router.callback_query(F.data.regexp(r"wbm:pause:(\d+)"))
-async def wb_pause_cb(cb: CallbackQuery, session: AsyncSession) -> None:
+async def wb_pause_cb(cb: CallbackQuery, session: AsyncSession, redis: "Redis") -> None:
     track_id = int(cb.data.split(":")[2])
     await toggle_track_active(session, track_id, False)
     await session.commit()
@@ -295,13 +355,23 @@ async def wb_pause_cb(cb: CallbackQuery, session: AsyncSession) -> None:
         if track.id == track_id:
             await cb.message.edit_text(
                 format_track_text(track),
-                reply_markup=paged_track_kb(track, idx, len(tracks)),
+                reply_markup=await _track_kb_with_usage(
+                    session=session,
+                    redis=redis,
+                    user_tg_id=cb.from_user.id,
+                    user_plan=user.plan,
+                    track=track,
+                    page=idx,
+                    total=len(tracks),
+                ),
             )
             break
 
 
 @router.callback_query(F.data.regexp(r"wbm:resume:(\d+)"))
-async def wb_resume_cb(cb: CallbackQuery, session: AsyncSession) -> None:
+async def wb_resume_cb(
+    cb: CallbackQuery, session: AsyncSession, redis: "Redis"
+) -> None:
     track_id = int(cb.data.split(":")[2])
     await toggle_track_active(session, track_id, True)
     await session.commit()
@@ -313,13 +383,23 @@ async def wb_resume_cb(cb: CallbackQuery, session: AsyncSession) -> None:
         if track.id == track_id:
             await cb.message.edit_text(
                 format_track_text(track),
-                reply_markup=paged_track_kb(track, idx, len(tracks)),
+                reply_markup=await _track_kb_with_usage(
+                    session=session,
+                    redis=redis,
+                    user_tg_id=cb.from_user.id,
+                    user_plan=user.plan,
+                    track=track,
+                    page=idx,
+                    total=len(tracks),
+                ),
             )
             break
 
 
 @router.callback_query(F.data.regexp(r"wbm:remove:(\d+)"))
-async def wb_remove_cb(cb: CallbackQuery, session: AsyncSession) -> None:
+async def wb_remove_cb(
+    cb: CallbackQuery, session: AsyncSession, redis: "Redis"
+) -> None:
     track_id = int(cb.data.split(":")[2])
     user = await get_or_create_monitor_user(
         session, cb.from_user.id, cb.from_user.username
@@ -329,10 +409,14 @@ async def wb_remove_cb(cb: CallbackQuery, session: AsyncSession) -> None:
         if track.id == track_id:
             await cb.message.edit_text(
                 format_track_text(track),
-                reply_markup=paged_track_kb(
-                    track,
-                    idx,
-                    len(tracks),
+                reply_markup=await _track_kb_with_usage(
+                    session=session,
+                    redis=redis,
+                    user_tg_id=cb.from_user.id,
+                    user_plan=user.plan,
+                    track=track,
+                    page=idx,
+                    total=len(tracks),
                     confirm_remove=True,
                 ),
             )
@@ -342,7 +426,11 @@ async def wb_remove_cb(cb: CallbackQuery, session: AsyncSession) -> None:
 
 
 @router.callback_query(F.data.regexp(r"wbm:remove_no:(\d+)"))
-async def wb_remove_no_cb(cb: CallbackQuery, session: AsyncSession) -> None:
+async def wb_remove_no_cb(
+    cb: CallbackQuery,
+    session: AsyncSession,
+    redis: "Redis",
+) -> None:
     track_id = int(cb.data.split(":")[2])
     user = await get_or_create_monitor_user(
         session, cb.from_user.id, cb.from_user.username
@@ -352,7 +440,15 @@ async def wb_remove_no_cb(cb: CallbackQuery, session: AsyncSession) -> None:
         if track.id == track_id:
             await cb.message.edit_text(
                 format_track_text(track),
-                reply_markup=paged_track_kb(track, idx, len(tracks)),
+                reply_markup=await _track_kb_with_usage(
+                    session=session,
+                    redis=redis,
+                    user_tg_id=cb.from_user.id,
+                    user_plan=user.plan,
+                    track=track,
+                    page=idx,
+                    total=len(tracks),
+                ),
             )
             await cb.answer(tx.REMOVE_CANCELLED)
             return
@@ -1165,7 +1261,7 @@ async def wb_cancel_cb(
 
 
 @router.callback_query(F.data.regexp(r"wbm:back:(\d+)"))
-async def wb_back_cb(cb: CallbackQuery, session: AsyncSession) -> None:
+async def wb_back_cb(cb: CallbackQuery, session: AsyncSession, redis: "Redis") -> None:
     track_id = int(cb.data.split(":")[2])
     user = await get_or_create_monitor_user(
         session, cb.from_user.id, cb.from_user.username
@@ -1175,7 +1271,15 @@ async def wb_back_cb(cb: CallbackQuery, session: AsyncSession) -> None:
         if track.id == track_id:
             await cb.message.edit_text(
                 format_track_text(track),
-                reply_markup=paged_track_kb(track, idx, len(tracks)),
+                reply_markup=await _track_kb_with_usage(
+                    session=session,
+                    redis=redis,
+                    user_tg_id=cb.from_user.id,
+                    user_plan=user.plan,
+                    track=track,
+                    page=idx,
+                    total=len(tracks),
+                ),
             )
             break
 

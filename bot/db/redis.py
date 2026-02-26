@@ -273,3 +273,22 @@ class FeatureUsageDailyRD:
             return False, daily_limit
 
         return True, used_now
+
+    @classmethod
+    async def get_used(
+        cls,
+        redis: Redis,
+        *,
+        tg_user_id: int,
+        feature: str,
+    ) -> int:
+        now = datetime.utcnow()  # noqa: DTZ003
+        day_key = cls._day_key(now)
+        key = cls._key(tg_user_id=tg_user_id, feature=feature, day_key=day_key)
+        raw = await redis.get(key)
+        if raw is None:
+            return 0
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            return 0
