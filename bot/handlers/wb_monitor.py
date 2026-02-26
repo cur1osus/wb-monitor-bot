@@ -5,7 +5,6 @@ import logging
 import re
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal, InvalidOperation
 from html import escape
 from typing import TYPE_CHECKING
 
@@ -28,7 +27,6 @@ from bot.db.models import TrackModel
 from bot.db.redis import (
     FeatureUsageDailyRD,
     MonitorUserRD,
-    WbBrowserSimilarCacheRD,
     WbReviewInsightsCacheRD,
     WbSimilarItemRD,
     WbSimilarSearchCacheRD,
@@ -86,10 +84,8 @@ from bot.services.review_analysis import (
     ReviewAnalysisRateLimitError,
     analyze_reviews_with_llm,
 )
-from bot.services.wb_browser_similar import fetch_visual_similar_products
 from bot.services.utils import is_admin
 from bot.services.wb_client import (
-    WbSimilarProduct,
     extract_wb_item_id,
     fetch_product,
     search_similar_cheaper,
@@ -106,13 +102,6 @@ router = Router()
 logger = logging.getLogger(__name__)
 _LIKELY_WB_INPUT_RE = re.compile(r"wildberries|wb\.ru|\d{6,15}", re.IGNORECASE)
 _ADMIN_PROMO_PAGE_SIZE = 8
-
-
-def _similar_provider_mode() -> str:
-    mode = (se.wb_similar_provider or "api").strip().lower()
-    if mode in {"api", "browser", "auto"}:
-        return mode
-    return "api"
 
 
 def _model_signature(model: str, review_limit: int) -> str:
@@ -688,13 +677,8 @@ async def wb_find_cheaper_cb(
     )
 
     cfg = runtime_config_view(await get_runtime_config(session))
-    provider_mode = _similar_provider_mode()
     cached = await WbSimilarSearchCacheRD.get(redis, track.id)
-    if (
-        cached is None
-        or cached.match_percent != cfg.cheap_match_percent
-        or cached.provider_mode != provider_mode
-    ):
+    if cached is None or cached.match_percent != cfg.cheap_match_percent:
         user = await get_or_create_monitor_user(
             session,
             cb.from_user.id,
@@ -734,85 +718,31 @@ async def wb_find_cheaper_cb(
                 )
                 return
 
-            found: list[WbSimilarProduct] = []
+            found = await search_similar_cheaper(
+                base_title=current.title or track.title,
+                base_entity=current.entity,
+                base_brand=current.brand,
+                base_subject_id=current.subject_id,
+                match_percent_threshold=cfg.cheap_match_percent,
+                max_price=current.price,
+                exclude_wb_item_id=track.wb_item_id,
+                limit=12,
+            )
 
-            if provider_mode in {"browser", "auto"}:
-                cached_browser = await WbBrowserSimilarCacheRD.get(
-                    redis, track.wb_item_id
-                )
-                browser_candidates: list[WbSimilarProduct] = []
-                if cached_browser and cached_browser.items:
-                    for item in cached_browser.items:
-                        try:
-                            price = Decimal(item.price)
-                        except (InvalidOperation, TypeError, ValueError):
-                            continue
-                        if price <= 0:
-                            continue
-                        browser_candidates.append(
-                            WbSimilarProduct(
-                                wb_item_id=item.wb_item_id,
-                                title=item.title,
-                                price=price,
-                                url=item.url,
-                            )
-                        )
-                else:
-                    browser_candidates = await fetch_visual_similar_products(
-                        track.wb_item_id,
-                        limit=24,
-                        timeout_sec=20,
-                    )
-                    if browser_candidates:
-                        await WbBrowserSimilarCacheRD(
-                            wb_item_id=track.wb_item_id,
-                            items=[
-                                WbSimilarItemRD(
-                                    wb_item_id=item.wb_item_id,
-                                    title=item.title,
-                                    price=str(item.price),
-                                    url=item.url,
-                                )
-                                for item in browser_candidates
-                            ],
-                        ).save(redis)
-
-                if browser_candidates:
-                    found = [
-                        item
-                        for item in browser_candidates
-                        if item.wb_item_id != track.wb_item_id
-                        and item.price < current.price
-                    ]
-                    found.sort(key=lambda p: p.price)
-                    found = found[:12]
-
-            if provider_mode == "api" or not found:
+            # Soft fallback: if strict matching returned nothing,
+            # retry with lower similarity and without subject lock.
+            if not found:
+                fallback_threshold = max(15, int(cfg.cheap_match_percent) - 20)
                 found = await search_similar_cheaper(
                     base_title=current.title or track.title,
                     base_entity=current.entity,
                     base_brand=current.brand,
-                    base_subject_id=current.subject_id,
-                    match_percent_threshold=cfg.cheap_match_percent,
+                    base_subject_id=None,
+                    match_percent_threshold=fallback_threshold,
                     max_price=current.price,
                     exclude_wb_item_id=track.wb_item_id,
                     limit=12,
                 )
-
-                # Soft fallback: if strict matching returned nothing,
-                # retry with lower similarity and without subject lock.
-                if not found:
-                    fallback_threshold = max(15, int(cfg.cheap_match_percent) - 20)
-                    found = await search_similar_cheaper(
-                        base_title=current.title or track.title,
-                        base_entity=current.entity,
-                        base_brand=current.brand,
-                        base_subject_id=None,
-                        match_percent_threshold=fallback_threshold,
-                        max_price=current.price,
-                        exclude_wb_item_id=track.wb_item_id,
-                        limit=12,
-                    )
 
             reranked = found[:5]
         finally:
@@ -832,7 +762,6 @@ async def wb_find_cheaper_cb(
             track_id=track.id,
             base_price=current_price_text,
             match_percent=cfg.cheap_match_percent,
-            provider_mode=provider_mode,
             items=alternatives,
         ).save(redis)
     else:
