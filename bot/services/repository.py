@@ -219,6 +219,29 @@ async def get_promo_by_code(
     )
 
 
+async def get_promo_by_code_any(
+    session: AsyncSession,
+    *,
+    code: str,
+) -> PromoLinkModel | None:
+    return await session.scalar(
+        select(PromoLinkModel).where(PromoLinkModel.code == code)
+    )
+
+
+async def deactivate_promo_link(
+    session: AsyncSession,
+    *,
+    promo_id: int,
+) -> bool:
+    result = await session.execute(
+        update(PromoLinkModel)
+        .where(PromoLinkModel.id == promo_id, PromoLinkModel.is_active.is_(True))
+        .values(is_active=False)
+    )
+    return bool(result.rowcount)
+
+
 async def get_promo_activation(
     session: AsyncSession,
     *,

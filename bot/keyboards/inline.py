@@ -303,6 +303,7 @@ def admin_promo_kb() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [_btn(tx.BTN_ADMIN_PROMO_PRO, "wbm:admin:promo:pro")],
             [_btn(tx.BTN_ADMIN_PROMO_DISCOUNT, "wbm:admin:promo:discount")],
+            [_btn(tx.BTN_ADMIN_PROMO_DEACTIVATE, "wbm:admin:promo:deactivate")],
             [_btn(tx.BTN_BACK, "wbm:admin:0")],
         ]
     )
