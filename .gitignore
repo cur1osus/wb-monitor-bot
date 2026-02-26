@@ -130,3 +130,6 @@ redis/data/
 
 # Local deployment notes for LLM sessions
 DEPLOY_LLM.md
+
+# Ruff
+.ruff_cache

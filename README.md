@@ -10,6 +10,9 @@ Telegram bot for monitoring Wildberries products.
 cp .env.example .env
 ```
 
+For reviews analysis via LLM, set `GROQ_API_KEY`, `GROQ_MODEL` and (optionally)
+`GROQ_FALLBACK_MODELS` in `.env`.
+
 2. Install dependencies:
 
 ```bash

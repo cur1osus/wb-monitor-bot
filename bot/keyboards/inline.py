@@ -173,6 +173,7 @@ def paged_track_kb(
             ],
             [
                 _btn("🔎 Найти дешевле", f"wbm:cheap:{track.id}"),
+                _btn("🧠 Анализ отзывов", f"wbm:reviews:{track.id}"),
             ],
             nav,
             [_btn("◀️ В меню", "wbm:home:0")],

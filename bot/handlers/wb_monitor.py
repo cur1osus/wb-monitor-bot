@@ -54,6 +54,13 @@ from bot.services.repository import (
     apply_runtime_intervals,
     set_user_tracks_interval,
 )
+from bot.services.review_analysis import (
+    ReviewAnalysisConfigError,
+    ReviewAnalysisError,
+    ReviewInsights,
+    ReviewAnalysisRateLimitError,
+    analyze_reviews_with_groq,
+)
 from bot.services.utils import is_admin
 from bot.services.wb_client import (
     extract_wb_item_id,
@@ -71,6 +78,35 @@ if TYPE_CHECKING:
 router = Router()
 logger = logging.getLogger(__name__)
 _LIKELY_WB_INPUT_RE = re.compile(r"wildberries|wb\.ru|\d{6,15}", re.IGNORECASE)
+
+
+def _format_review_insights_text(track_title: str, insights: ReviewInsights) -> str:
+    lines = [
+        f"🧠 <b>Анализ отзывов</b> для <b>{escape(track_title)}</b>",
+        (
+            f"<blockquote>Развернутых отзывов: +{insights.positive_samples} "
+            f"/ -{insights.negative_samples}</blockquote>"
+        ),
+        "",
+        "✅ <b>Сильные качества:</b>",
+    ]
+
+    if insights.strengths:
+        for idx, item in enumerate(insights.strengths, start=1):
+            lines.append(f"{idx}. {escape(item)}")
+    else:
+        lines.append("1. Не удалось выделить по доступным отзывам.")
+
+    lines.append("")
+    lines.append("⚠️ <b>Слабые качества:</b>")
+
+    if insights.weaknesses:
+        for idx, item in enumerate(insights.weaknesses, start=1):
+            lines.append(f"{idx}. {escape(item)}")
+    else:
+        lines.append("Нет явных повторяющихся минусов в развернутых отзывах.")
+
+    return "\n".join(lines)
 
 
 class SettingsState(StatesGroup):
@@ -419,6 +455,63 @@ async def wb_find_cheaper_cb(
         "\n".join(lines),
         reply_markup=back_kb,
         link_preview_options=LinkPreviewOptions(is_disabled=True),
+    )
+
+
+@router.callback_query(F.data.regexp(r"wbm:reviews:(\d+)"))
+async def wb_reviews_analysis_cb(
+    cb: CallbackQuery,
+    session: AsyncSession,
+) -> None:
+    track_id = int(cb.data.split(":")[2])
+    track = await get_user_track_by_id(session, track_id)
+    if not track:
+        await cb.answer("Трек не найден", show_alert=True)
+        return
+
+    await cb.answer("Анализирую отзывы...")
+    back_kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="◀️ К товару", callback_data=f"wbm:back:{track.id}"
+                )
+            ]
+        ]
+    )
+    await cb.message.edit_text(
+        f"🧠 Анализирую развернутые отзывы для <b>{escape(track.title)}</b>...",
+        reply_markup=back_kb,
+    )
+
+    try:
+        insights = await analyze_reviews_with_groq(
+            wb_item_id=track.wb_item_id,
+            product_title=track.title,
+            groq_api_key=se.groq_api_key,
+            groq_model=se.groq_model,
+            groq_fallback_models=se.groq_fallback_models,
+        )
+    except ReviewAnalysisConfigError as exc:
+        await cb.message.edit_text(f"❌ {escape(str(exc))}", reply_markup=back_kb)
+        return
+    except ReviewAnalysisRateLimitError as exc:
+        await cb.message.edit_text(f"⏳ {escape(str(exc))}", reply_markup=back_kb)
+        return
+    except ReviewAnalysisError as exc:
+        await cb.message.edit_text(f"❌ {escape(str(exc))}", reply_markup=back_kb)
+        return
+    except Exception:
+        logger.exception("Unexpected error during reviews analysis")
+        await cb.message.edit_text(
+            "❌ Не удалось выполнить анализ отзывов. Попробуйте позже.",
+            reply_markup=back_kb,
+        )
+        return
+
+    await cb.message.edit_text(
+        _format_review_insights_text(track.title, insights),
+        reply_markup=back_kb,
     )
 
 
