@@ -595,6 +595,15 @@ async def search_similar_cheaper_via_web(
     required_anchor_matches = _required_anchor_matches(base_anchor_tokens)
     min_match_percent = _normalize_match_percent(match_percent_threshold)
 
+    # Extra safety for web-fallback relevance: require meaningful lexical overlap.
+    base_core_tokens = {
+        token
+        for token in base_tokens
+        if len(token) >= 5 and token not in base_type_tokens and token not in base_brand_tokens
+    }
+    if not base_core_tokens:
+        base_core_tokens = {token for token in base_anchor_tokens if len(token) >= 5}
+
     # two queries: broad + model-focused
     q1 = f'site:wildberries.ru {base_title}'
     model_part = " ".join(sorted(base_model_tokens))
@@ -645,11 +654,19 @@ async def search_similar_cheaper_via_web(
             cand_brand_tokens = set(_tokenize(snap.brand or ""))
             if cand_brand_tokens and _match_count(base_brand_tokens, cand_brand_tokens) == 0:
                 continue
-        if required_anchor_matches > 0 and _match_count(base_anchor_tokens, candidate_tokens) < required_anchor_matches:
+        anchor_hits = _match_count(base_anchor_tokens, candidate_tokens)
+        if required_anchor_matches > 0 and anchor_hits < required_anchor_matches:
             continue
         if base_type_tokens and _match_count(base_type_tokens, candidate_tokens) == 0:
             continue
         if min_match_percent > 0 and _match_percent(base_tokens, candidate_tokens) < min_match_percent:
+            continue
+
+        # Strong guard against unrelated SERP noise (e.g. flower pots for markers).
+        core_hits = _match_count(base_core_tokens, candidate_tokens) if base_core_tokens else 0
+        if base_core_tokens and core_hits == 0:
+            continue
+        if anchor_hits == 0 and core_hits < 2:
             continue
 
         candidates.append(
