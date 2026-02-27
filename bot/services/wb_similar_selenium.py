@@ -108,8 +108,20 @@ def fetch_similar_products(
     if limit <= 0:
         return []
 
-    url = _product_url(nm_id)
+    recommendation_url = _recommendation_url(nm_id)
     with _chrome_driver(headless=headless, timeout_sec=timeout_sec) as driver:
+        try:
+            driver.get(recommendation_url)
+        except TimeoutException:
+            logger.warning("Timeout while loading %s", recommendation_url)
+
+        _wait_for_page(driver, timeout_sec)
+        items = _collect_from_recommendation_dom(driver, limit=limit)
+        if len(items) >= max(1, min(limit, 3)):
+            return items[:limit]
+
+        # Fallback to product page parsing + network extraction.
+        url = _product_url(nm_id)
         try:
             driver.get(url)
         except TimeoutException:
@@ -117,15 +129,18 @@ def fetch_similar_products(
         _wait_for_page(driver, timeout_sec)
         _scroll_for_similar(driver)
 
-        items = _collect_from_dom(driver, limit=limit)
-        if len(items) < max(1, limit // 2):
-            network_items = _collect_from_network(driver, limit=limit)
-            items = _merge_items(items, network_items, limit=limit)
-        return items[:limit]
+        dom_items = _collect_from_dom(driver, limit=limit)
+        network_items = _collect_from_network(driver, limit=limit)
+        merged = _merge_items(items + dom_items, network_items, limit=limit)
+        return merged[:limit]
 
 
 def _product_url(nm_id: int) -> str:
     return f"https://www.wildberries.ru/catalog/{nm_id}/detail.aspx"
+
+
+def _recommendation_url(nm_id: int) -> str:
+    return f"https://www.wildberries.ru/recommendation/catalog?type=visuallysimilar&forproduct={nm_id}"
 
 
 def _wait_for_page(driver: webdriver.Chrome, timeout_sec: float) -> None:
@@ -143,6 +158,69 @@ def _scroll_for_similar(driver: webdriver.Chrome) -> None:
         time.sleep(0.6)
     except WebDriverException:
         pass
+
+
+def _collect_from_recommendation_dom(
+    driver: webdriver.Chrome,
+    *,
+    limit: int,
+) -> list[WbSimilarProductItem]:
+    try:
+        wait = WebDriverWait(driver, 12)
+        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "article")))
+    except TimeoutException:
+        return []
+
+    articles = driver.find_elements(By.CSS_SELECTOR, "article")
+    items: list[WbSimilarProductItem] = []
+
+    for article in articles:
+        try:
+            anchor = article.find_element(By.CSS_SELECTOR, "a[href*='/catalog/'][href*='detail.aspx']")
+        except WebDriverException:
+            continue
+
+        href = anchor.get_attribute("href") or ""
+        nm_id = _parse_nm_id_from_url(href)
+        if nm_id is None:
+            continue
+
+        title = (anchor.get_attribute("aria-label") or anchor.get_attribute("title") or anchor.text or "").strip()
+        if not title:
+            title = _first_text(article, ["h2", "h3"]) or f"Item {nm_id}"
+
+        heading = _first_text(article, ["h2", "h3"])
+        brand: str | None = None
+        if heading and " / " in heading:
+            brand = heading.split(" / ", 1)[0].strip() or None
+
+        final_price = _parse_price_text(_first_text(article, ["ins", "ins bdi", "ins span"]))
+        sale_price = _parse_price_text(_first_text(article, ["del", "del bdi", "del span"]))
+
+        rating: Decimal | None = None
+        feedbacks: int | None = None
+        rating_block = _first_text(article, ["[class*='rating']"])
+        if rating_block:
+            rating = _parse_decimal(rating_block)
+            feedbacks = _parse_int(rating_block)
+
+        items.append(
+            WbSimilarProductItem(
+                nm_id=nm_id,
+                title=title,
+                brand=brand,
+                final_price=final_price,
+                sale_price=sale_price,
+                rating=rating,
+                feedbacks=feedbacks,
+                product_url=_normalize_url(href, nm_id),
+            )
+        )
+
+        if len(items) >= limit:
+            break
+
+    return _dedupe_items(items, limit=limit)
 
 
 def _collect_from_dom(
