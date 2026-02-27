@@ -90,6 +90,7 @@ from bot.services.wb_client import (
     fetch_product,
     search_similar_cheaper_title_only,
 )
+from bot.services.wb_similar_selenium import fetch_similar_products
 from bot.settings import se
 
 if TYPE_CHECKING:
@@ -721,27 +722,65 @@ async def wb_find_cheaper_cb(
                 )
                 return
 
-            found = await search_similar_cheaper_title_only(
-                base_title=current.title or track.title,
-                match_percent_threshold=cfg.cheap_match_percent,
-                max_price=current.price,
-                exclude_wb_item_id=track.wb_item_id,
-                limit=12,
-            )
+            try:
+                selenium_items = await asyncio.to_thread(
+                    fetch_similar_products,
+                    track.wb_item_id,
+                    limit=40,
+                    timeout_sec=20.0,
+                    headless=True,
+                )
+            except Exception:
+                logger.exception(
+                    "Selenium similar parser failed (track_id=%s, wb_item_id=%s)",
+                    track.id,
+                    track.wb_item_id,
+                )
+                selenium_items = []
 
-            reranked = found[:5]
+            reranked: list[WbSimilarItemRD] = []
+            if selenium_items:
+                cheaper = [
+                    item
+                    for item in selenium_items
+                    if item.nm_id != track.wb_item_id
+                    and item.final_price is not None
+                    and item.final_price < current.price
+                ]
+                cheaper.sort(key=lambda item: item.final_price)
+                if cheaper:
+                    best = cheaper[0]
+                    reranked = [
+                        WbSimilarItemRD(
+                            wb_item_id=best.nm_id,
+                            title=best.title,
+                            price=str(best.final_price),
+                            url=best.product_url,
+                        )
+                    ]
+
+            if not reranked:
+                found = await search_similar_cheaper_title_only(
+                    base_title=current.title or track.title,
+                    match_percent_threshold=cfg.cheap_match_percent,
+                    max_price=current.price,
+                    exclude_wb_item_id=track.wb_item_id,
+                    limit=12,
+                )
+                if found:
+                    best_fallback = min(found, key=lambda item: item.price)
+                    reranked = [
+                        WbSimilarItemRD(
+                            wb_item_id=best_fallback.wb_item_id,
+                            title=best_fallback.title,
+                            price=str(best_fallback.price),
+                            url=best_fallback.url,
+                        )
+                    ]
         finally:
             await _stop_spinner(spinner_task)
 
-        alternatives = [
-            WbSimilarItemRD(
-                wb_item_id=item.wb_item_id,
-                title=item.title,
-                price=str(item.price),
-                url=item.url,
-            )
-            for item in reranked
-        ]
+        alternatives = reranked
         current_price_text = str(current.price)
         await WbSimilarSearchCacheRD(
             track_id=track.id,
