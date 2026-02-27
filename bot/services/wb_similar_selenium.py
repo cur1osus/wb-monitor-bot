@@ -19,11 +19,6 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
-try:  # pragma: no cover - runtime dependency
-    from webdriver_manager.chrome import ChromeDriverManager
-except Exception:  # pragma: no cover - optional fallback
-    ChromeDriverManager = None
-
 logger = logging.getLogger(__name__)
 
 _SIMILAR_SECTION_RE = re.compile(
@@ -99,9 +94,8 @@ def _build_chrome_service() -> ChromeService:
     chromedriver_path = os.environ.get("WB_CHROMEDRIVER_PATH")
     if chromedriver_path:
         return ChromeService(executable_path=chromedriver_path)
-    if ChromeDriverManager is None:
-        return ChromeService()
-    return ChromeService(ChromeDriverManager().install())
+    # Prefer Selenium Manager auto-resolution to match installed Chrome/Chromium.
+    return ChromeService()
 
 
 def fetch_similar_products(
