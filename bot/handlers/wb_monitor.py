@@ -7,8 +7,10 @@ from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from html import escape
+from urllib.parse import quote_plus
 from typing import TYPE_CHECKING
 
+from aiohttp import ClientSession
 from aiogram import Router, F
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import StateFilter
@@ -312,6 +314,65 @@ async def _track_kb_with_usage(
             limit=limit,
         ),
     )
+
+
+async def _search_wb_loose_alternatives(
+    *,
+    base_title: str,
+    exclude_wb_item_id: int,
+    max_price: Decimal | None,
+    limit: int = 5,
+) -> list[WbSimilarItemRD]:
+    tokens = [t for t in re.split(r"\s+", base_title.strip()) if len(t) >= 3]
+    if not tokens:
+        return []
+    query = " ".join(tokens[:5])
+    url = (
+        "https://search.wb.ru/exactmatch/ru/common/v14/search"
+        f"?appType=1&curr=rub&dest=-1257786&query={quote_plus(query)}&resultset=catalog&page=1"
+    )
+
+    try:
+        async with ClientSession() as client:
+            async with client.get(url, timeout=12) as resp:
+                if resp.status != 200:
+                    return []
+                data = await resp.json(content_type=None)
+    except Exception:
+        return []
+
+    products = data.get("data", {}).get("products", []) if isinstance(data, dict) else []
+    out: list[WbSimilarItemRD] = []
+    for product in products:
+        if not isinstance(product, dict):
+            continue
+        nm_id = product.get("id") or product.get("nmId")
+        if not isinstance(nm_id, int) or nm_id == exclude_wb_item_id:
+            continue
+
+        sale_u = product.get("salePriceU")
+        if not isinstance(sale_u, (int, float)):
+            continue
+        price = Decimal(str(sale_u)) / Decimal("100")
+
+        title = str(product.get("name") or product.get("title") or f"Item {nm_id}")
+        url = f"https://www.wildberries.ru/catalog/{nm_id}/detail.aspx"
+
+        out.append(
+            WbSimilarItemRD(
+                wb_item_id=nm_id,
+                title=title,
+                price=str(price),
+                url=url,
+            )
+        )
+
+    out.sort(key=lambda item: Decimal(item.price))
+    if max_price is not None:
+        cheaper = [item for item in out if Decimal(item.price) < max_price]
+        if cheaper:
+            return cheaper[:limit]
+    return out[:limit]
 
 
 class SettingsState(StatesGroup):
@@ -778,6 +839,14 @@ async def wb_find_cheaper_cb(
                         )
                         for item in found[:5]
                     ]
+
+            if not reranked:
+                reranked = await _search_wb_loose_alternatives(
+                    base_title=current.title or track.title,
+                    exclude_wb_item_id=track.wb_item_id,
+                    max_price=current.price,
+                    limit=5,
+                )
         finally:
             await _stop_spinner(spinner_task)
 
