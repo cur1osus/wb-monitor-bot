@@ -30,3 +30,13 @@ uv run --package migrations alembic -c migrations/alembic.ini upgrade head
 ```bash
 uv run python -m bot
 ```
+
+## Similar products CLI
+
+Fetch similar products by Wildberries nmId via Selenium (headless Chrome):
+
+```bash
+uv run python -m bot.cli.wb_similar 12345678 --limit 20 --timeout 20
+```
+
+To open a visible browser window, add `--no-headless`.

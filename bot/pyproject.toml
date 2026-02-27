@@ -9,9 +9,11 @@ dependencies = [
     "pymorphy3==2.0.3",
     "python-dotenv==1.0.1",
     "redis[hiredis]==7.1.1",
+    "selenium==4.40.0",
     "sqlalchemy==2.0.46",
     "tzdata==2025.3",
     "uvloop==0.22.1; sys_platform == 'linux' or sys_platform == 'darwin'",
+    "webdriver-manager==4.0.2",
 ]
 
 [tool.uv]
