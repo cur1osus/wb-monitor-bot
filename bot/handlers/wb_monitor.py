@@ -748,16 +748,15 @@ async def wb_find_cheaper_cb(
                     and item.final_price < current.price
                 ]
                 cheaper.sort(key=lambda item: item.final_price)
-                if cheaper:
-                    best = cheaper[0]
-                    reranked = [
-                        WbSimilarItemRD(
-                            wb_item_id=best.nm_id,
-                            title=best.title,
-                            price=str(best.final_price),
-                            url=best.product_url,
-                        )
-                    ]
+                reranked = [
+                    WbSimilarItemRD(
+                        wb_item_id=item.nm_id,
+                        title=item.title,
+                        price=str(item.final_price),
+                        url=item.product_url,
+                    )
+                    for item in cheaper[:5]
+                ]
 
             if not reranked:
                 found = await search_similar_cheaper_title_only(
@@ -768,14 +767,14 @@ async def wb_find_cheaper_cb(
                     limit=12,
                 )
                 if found:
-                    best_fallback = min(found, key=lambda item: item.price)
                     reranked = [
                         WbSimilarItemRD(
-                            wb_item_id=best_fallback.wb_item_id,
-                            title=best_fallback.title,
-                            price=str(best_fallback.price),
-                            url=best_fallback.url,
+                            wb_item_id=item.wb_item_id,
+                            title=item.title,
+                            price=str(item.price),
+                            url=item.url,
                         )
+                        for item in found[:5]
                     ]
         finally:
             await _stop_spinner(spinner_task)
