@@ -13,7 +13,13 @@ def _parse_args(argv: Iterable[str] | None) -> argparse.Namespace:
         description="Fetch similar Wildberries products by nmId via Selenium.",
     )
     parser.add_argument(
-        "nm_id",
+        "nm_id_positional",
+        nargs="?",
+        help="Wildberries nmId or product URL (positional)",
+    )
+    parser.add_argument(
+        "--nm-id",
+        dest="nm_id",
         help="Wildberries nmId or product URL",
     )
     parser.add_argument(
@@ -59,7 +65,12 @@ def main(argv: Iterable[str] | None = None) -> int:
     from bot.services.wb_client import extract_wb_item_id
     from bot.services.wb_similar_selenium import fetch_similar_products
 
-    nm_id = extract_wb_item_id(str(args.nm_id))
+    raw_nm_id = args.nm_id if args.nm_id is not None else args.nm_id_positional
+    if raw_nm_id is None:
+        print("Provide nmId via --nm-id or positional argument", file=sys.stderr)
+        return 2
+
+    nm_id = extract_wb_item_id(str(raw_nm_id))
     if nm_id is None:
         print("Invalid nmId or URL", file=sys.stderr)
         return 2

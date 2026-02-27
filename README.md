@@ -36,7 +36,7 @@ uv run python -m bot
 Fetch similar products by Wildberries nmId via Selenium (headless Chrome):
 
 ```bash
-uv run python -m bot.cli.wb_similar 12345678 --limit 20 --timeout 20
+uv run python -m bot.wb_similar_parser --nm-id 12345678 --limit 20 --timeout 20
 ```
 
 To open a visible browser window, add `--no-headless`.
