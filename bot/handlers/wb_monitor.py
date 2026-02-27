@@ -5,6 +5,7 @@ import logging
 import re
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from html import escape
 from typing import TYPE_CHECKING
 
@@ -740,14 +741,15 @@ async def wb_find_cheaper_cb(
 
             reranked: list[WbSimilarItemRD] = []
             if selenium_items:
-                cheaper = [
+                priced = [
                     item
                     for item in selenium_items
-                    if item.nm_id != track.wb_item_id
-                    and item.final_price is not None
-                    and item.final_price < current.price
+                    if item.nm_id != track.wb_item_id and item.final_price is not None
                 ]
-                cheaper.sort(key=lambda item: item.final_price)
+                priced.sort(key=lambda item: item.final_price)
+
+                cheaper = [item for item in priced if item.final_price < current.price]
+                selected = cheaper[:5] if cheaper else priced[:5]
                 reranked = [
                     WbSimilarItemRD(
                         wb_item_id=item.nm_id,
@@ -755,7 +757,7 @@ async def wb_find_cheaper_cb(
                         price=str(item.final_price),
                         url=item.product_url,
                     )
-                    for item in cheaper[:5]
+                    for item in selected
                 ]
 
             if not reranked:
@@ -809,6 +811,24 @@ async def wb_find_cheaper_cb(
         ),
         "",
     ]
+
+    try:
+        current_price_decimal = Decimal(current_price_text)
+    except (InvalidOperation, TypeError):
+        current_price_decimal = None
+
+    if current_price_decimal is not None:
+        has_cheaper = False
+        for item in alternatives:
+            try:
+                if Decimal(str(item.price)) < current_price_decimal:
+                    has_cheaper = True
+                    break
+            except (InvalidOperation, TypeError):
+                continue
+        if not has_cheaper:
+            lines.append("ℹ️ Дешевле не нашлось — показываю ближайшие похожие по цене.")
+            lines.append("")
     for idx, item in enumerate(alternatives, start=1):
         lines.append(
             f'{idx}. <a href="{item.url}">{escape(item.title)}</a> — <b>{item.price} ₽</b>'
