@@ -92,6 +92,8 @@ from bot.services.wb_client import (
     extract_wb_item_id,
     fetch_product,
     search_similar_cheaper_title_only,
+    WB_HTTP_HEADERS,
+    WB_HTTP_PROXY,
 )
 from bot.services.wb_similar_selenium import fetch_similar_products
 from bot.settings import se
@@ -333,8 +335,8 @@ async def _search_wb_loose_alternatives(
     )
 
     try:
-        async with ClientSession() as client:
-            async with client.get(url, timeout=12) as resp:
+        async with ClientSession(headers=WB_HTTP_HEADERS) as client:
+            async with client.get(url, timeout=12, proxy=WB_HTTP_PROXY) as resp:
                 if resp.status != 200:
                     return []
                 data = await resp.json(content_type=None)
