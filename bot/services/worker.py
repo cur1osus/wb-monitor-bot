@@ -93,7 +93,7 @@ async def run_cycle(
                         )
 
                     if t.watch_stock and t.last_in_stock is False and snap.in_stock:
-                        events.append(_msg("in_stock"))
+                        events.append(_msg("in_stock", track_id=t.id))
 
                     if (
                         t.user.plan == "pro"

@@ -357,7 +357,7 @@ START_REF_LINKED = "✅ Вы подключены по реферальной с
 WORKER_EVENTS: dict[str, str] = {
     "price_target": "💸 Цена достигла цели: {price} ₽ (цель: {target} ₽)",
     "price_drop": "📉 Падение цены на {percent}%: {old} ₽ → {new} ₽",
-    "in_stock": "✅ Товар снова в наличии",
+    "in_stock": "✅ Товар снова в наличии (track: {track_id})",
     "stock_changed": "📦 Остаток изменился {direction}: {old} → {new}",
     "sizes_appeared": "📏 Появились размеры: {sizes}",
     "sizes_gone": "📏 Исчезли размеры: {sizes}",
