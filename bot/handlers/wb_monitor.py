@@ -41,6 +41,7 @@ from bot.keyboards.inline import (
     admin_promo_input_kb,
     admin_promo_kb,
     admin_promo_list_kb,
+    admin_support_ticket_kb,
     back_to_dashboard_kb,
     dashboard_kb,
     dashboard_text,
@@ -54,6 +55,8 @@ from bot.keyboards.inline import (
     paged_track_kb,
     ref_kb,
     settings_kb,
+    support_kb,
+    support_cancel_kb,
 )
 from bot.services.repository import (
     ActiveDiscount,
@@ -391,6 +394,11 @@ class SettingsState(StatesGroup):
     waiting_for_analysis_model = State()
     waiting_for_promo_pro = State()
     waiting_for_promo_discount = State()
+
+
+class SupportState(StatesGroup):
+    waiting_for_message = State()
+    waiting_for_admin_reply = State()
 
 
 @router.callback_query(F.data == "wbm:home:0")
@@ -2380,3 +2388,203 @@ async def wb_settings_sizes_msg(
         )
     )
     await state.clear()
+
+
+# ─── Support ─────────────────────────────────────────────────────────────────
+
+
+from bot.services.repository import (
+    create_support_ticket,
+    get_open_tickets,
+    get_ticket_by_id,
+    reply_to_ticket,
+    close_ticket,
+    count_open_tickets,
+)
+
+
+@router.callback_query(F.data == "wbm:help:0")
+async def wb_help_cb(cb: CallbackQuery, session: AsyncSession) -> None:
+    """Показать раздел помощи и поддержки."""
+    user = await get_or_create_monitor_user(
+        session, cb.from_user.id, cb.from_user.username
+    )
+    is_admin_flag = is_admin(cb.from_user.id, se)
+    
+    # Для админа показываем количество открытых тикетов
+    if is_admin_flag:
+        open_count = await count_open_tickets(session)
+        text = tx.HELP_TEXT_ADMIN.format(open_tickets=open_count) if hasattr(tx, 'HELP_TEXT_ADMIN') else tx.HELP_TEXT
+    else:
+        text = tx.HELP_TEXT if hasattr(tx, 'HELP_TEXT') else "📨 Нажмите кнопку ниже, чтобы написать в поддержку."
+    
+    await cb.message.edit_text(
+        text,
+        reply_markup=support_kb(),
+    )
+
+
+@router.callback_query(F.data == "wbm:support:start")
+async def wb_support_start_cb(cb: CallbackQuery, state: FSMContext) -> None:
+    """Начать создание тикета."""
+    await state.set_state(SupportState.waiting_for_message)
+    await cb.message.edit_text(
+        tx.SUPPORT_PROMPT,
+        reply_markup=support_cancel_kb(),
+    )
+
+
+@router.callback_query(F.data == "wbm:support:cancel")
+async def wb_support_cancel_cb(cb: CallbackQuery, state: FSMContext) -> None:
+    """Отменить создание тикета."""
+    await state.clear()
+    await cb.message.edit_text(tx.SUPPORT_CANCELLED)
+    await asyncio.sleep(1)
+    # Возвращаем в меню
+    await wb_home_cb(cb)
+
+
+@router.message(SupportState.waiting_for_message, F.text)
+async def wb_support_message_msg(
+    msg: Message, state: FSMContext, session: AsyncSession, bot: Bot
+) -> None:
+    """Получить сообщение для тикета и создать его."""
+    user = await get_or_create_monitor_user(
+        session, msg.from_user.id, msg.from_user.username
+    )
+    
+    # Создаём тикет
+    ticket = await create_support_ticket(
+        session,
+        user_id=user.id,
+        tg_user_id=msg.from_user.id,
+        username=msg.from_user.username,
+        message=msg.text,
+    )
+    
+    await state.clear()
+    await msg.answer(tx.SUPPORT_SENT, reply_markup=dashboard_kb(is_admin(msg.from_user.id, se)))
+    
+    # Уведомляем админов о новом тикете
+    admin_ids = se.admin_ids_list or {se.developer_id}
+    for admin_id in admin_ids:
+        try:
+            username_display = f"@{ticket.username}" if ticket.username else f"ID:{ticket.tg_user_id}"
+            await bot.send_message(
+                admin_id,
+                tx.SUPPORT_ADMIN_NOTIFY.format(
+                    username=username_display,
+                    user_id=ticket.tg_user_id,
+                    created_at=ticket.created_at.strftime("%d.%m.%Y %H:%M"),
+                    message=ticket.message,
+                ),
+                reply_markup=admin_support_ticket_kb(ticket.id),
+            )
+        except Exception as e:
+            logger.warning("Failed to notify admin %s about ticket: %s", admin_id, e)
+    
+    # Отмечаем, что админы уведомлены
+    ticket.admin_notified = True
+    await session.commit()
+
+
+@router.callback_query(F.data.regexp(r"wbm:support:admin:reply:(\d+)"))
+async def wb_support_admin_reply_cb(
+    cb: CallbackQuery, state: FSMContext, session: AsyncSession
+) -> None:
+    """Админ нажал кнопку ответа на тикет."""
+    if not is_admin(cb.from_user.id, se):
+        await cb.answer(tx.NO_ACCESS, show_alert=True)
+        return
+    
+    ticket_id = int(cb.data.split(":")[4])
+    ticket = await get_ticket_by_id(session, ticket_id)
+    
+    if not ticket:
+        await cb.answer("❌ Тикет не найден", show_alert=True)
+        return
+    
+    if ticket.status == "closed":
+        await cb.answer("❌ Тикет уже закрыт", show_alert=True)
+        return
+    
+    await state.update_data(ticket_id=ticket_id, reply_to_user_id=ticket.tg_user_id)
+    await state.set_state(SupportState.waiting_for_admin_reply)
+    
+    await cb.message.answer(
+        f"✍️ Ответ на тикет #{ticket_id}\n\n"
+        f"👤 Пользователь: @{ticket.username or ticket.tg_user_id}\n"
+        f"📝 Сообщение: {ticket.message[:200]}...\n\n"
+        f"Напишите ваш ответ:",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="❌ Отмена", callback_data=f"wbm:support:admin:cancel")]
+            ]
+        ),
+    )
+    await cb.answer()
+
+
+@router.message(SupportState.waiting_for_admin_reply, F.text)
+async def wb_support_admin_reply_msg(
+    msg: Message, state: FSMContext, session: AsyncSession, bot: Bot
+) -> None:
+    """Админ отправил ответ на тикет."""
+    data = await state.get_data()
+    ticket_id = data.get("ticket_id")
+    reply_to_user_id = data.get("reply_to_user_id")
+    
+    if not ticket_id:
+        await state.clear()
+        return
+    
+    # Сохраняем ответ
+    ticket = await reply_to_ticket(
+        session,
+        ticket_id=ticket_id,
+        response=msg.text,
+        responded_by_tg_id=msg.from_user.id,
+    )
+    
+    await state.clear()
+    
+    if ticket:
+        # Отправляем ответ пользователю
+        try:
+            await bot.send_message(
+                reply_to_user_id,
+                tx.SUPPORT_USER_REPLY.format(response=ticket.response),
+            )
+        except Exception as e:
+            logger.warning("Failed to send reply to user %s: %s", reply_to_user_id, e)
+        
+        await msg.answer(tx.SUPPORT_ADMIN_REPLY_SENT)
+    else:
+        await msg.answer("❌ Ошибка: тикет не найден")
+
+
+@router.callback_query(F.data.regexp(r"wbm:support:admin:close:(\d+)"))
+async def wb_support_admin_close_cb(
+    cb: CallbackQuery, session: AsyncSession
+) -> None:
+    """Админ закрыл тикет без ответа."""
+    if not is_admin(cb.from_user.id, se):
+        await cb.answer(tx.NO_ACCESS, show_alert=True)
+        return
+    
+    ticket_id = int(cb.data.split(":")[4])
+    success = await close_ticket(session, ticket_id)
+    
+    if success:
+        await cb.answer(tx.SUPPORT_TICKET_CLOSED)
+        await cb.message.edit_text(f"{cb.message.text}\n\n🔒 Тикет #{ticket_id} закрыт")
+    else:
+        await cb.answer("❌ Тикет не найден", show_alert=True)
+
+
+@router.callback_query(F.data == "wbm:support:admin:cancel")
+async def wb_support_admin_cancel_cb(cb: CallbackQuery, state: FSMContext) -> None:
+    """Админ отменил ответ на тикет."""
+    await state.clear()
+    await cb.message.delete()
+    await cb.answer("Отменено")

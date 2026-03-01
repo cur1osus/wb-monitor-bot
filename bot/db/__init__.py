@@ -4,6 +4,7 @@ from bot.db.models import (
     MonitorUserModel,
     ReferralRewardModel,
     SnapshotModel,
+    SupportTicketModel,
     TrackModel,
 )
 from bot.db.redis import MonitorUserRD, WbItemCacheRD, WorkerStateRD
@@ -15,6 +16,7 @@ __all__ = [
     "MonitorUserRD",
     "ReferralRewardModel",
     "SnapshotModel",
+    "SupportTicketModel",
     "TrackModel",
     "WbItemCacheRD",
     "WorkerStateRD",

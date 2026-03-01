@@ -65,7 +65,7 @@ def dashboard_kb(is_admin: bool) -> InlineKeyboardMarkup:
             _btn(tx.BTN_REFERRAL, "wbm:ref:0"),
         ],
         [
-            _btn(tx.BTN_HELP, "wbm:help:0"),
+            _btn(tx.BTN_SUPPORT, "wbm:help:0"),
         ],
     ]
     if is_admin:
@@ -328,6 +328,37 @@ def admin_config_kb() -> InlineKeyboardMarkup:
 
 def admin_config_input_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[_btn(tx.BTN_BACK, "wbm:admin:cfg")]])
+
+
+def support_kb() -> InlineKeyboardMarkup:
+    """Клавиатура для раздела поддержки."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [_btn(tx.BTN_SUPPORT, "wbm:support:start")],
+            [_btn(tx.BTN_BACK_MENU, "wbm:home:0")],
+        ]
+    )
+
+
+def support_cancel_kb() -> InlineKeyboardMarkup:
+    """Клавиатура отмены создания тикета."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [_btn(tx.BTN_SUPPORT_CANCEL, "wbm:support:cancel")]
+        ]
+    )
+
+
+def admin_support_ticket_kb(ticket_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура для админа при просмотре тикета."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                _btn(tx.BTN_REPLY_TICKET, f"wbm:support:admin:reply:{ticket_id}", style="primary"),
+                _btn(tx.BTN_CLOSE_TICKET, f"wbm:support:admin:close:{ticket_id}", style="danger"),
+            ],
+        ]
+    )
 
 
 def admin_promo_kb() -> InlineKeyboardMarkup:

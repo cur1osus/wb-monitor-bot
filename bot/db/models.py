@@ -211,3 +211,38 @@ class PromoActivationModel(Base):
         default=lambda: datetime.now(UTC).replace(tzinfo=None),
         index=True,
     )
+
+
+class SupportTicketModel(Base):
+    """Тикеты поддержки."""
+
+    __tablename__ = "monitor_support_tickets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("monitor_users.id", ondelete="CASCADE"), index=True
+    )
+    tg_user_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    username: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    
+    # Статус: open, in_progress, closed
+    status: Mapped[str] = mapped_column(String(16), default="open", index=True)
+    
+    # Текст сообщения пользователя
+    message: Mapped[str] = mapped_column(Text)
+    
+    # Ответ поддержки
+    response: Mapped[str | None] = mapped_column(Text, nullable=True)
+    responded_by_tg_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    responded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    
+    # Было ли уведомление админу о новом тикете
+    admin_notified: Mapped[bool] = mapped_column(Boolean, default=False)
+    
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(UTC).replace(tzinfo=None),
+        index=True,
+    )
+
+    user: Mapped[MonitorUserModel] = relationship()

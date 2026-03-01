@@ -19,6 +19,7 @@ from bot.db.models import (
     ReferralRewardModel,
     RuntimeConfigModel,
     SnapshotModel,
+    SupportTicketModel,
     TrackModel,
 )
 from bot.db.redis import MonitorUserRD
@@ -701,4 +702,99 @@ async def get_admin_stats(session: AsyncSession, *, days: int) -> AdminStats:
         alerts_count=alerts_count,
         cheap_scans_count=cheap_scans_count,
         reviews_scans_count=reviews_scans_count,
+    )
+
+
+# ─── Support Tickets ─────────────────────────────────────────────────────────
+
+
+async def create_support_ticket(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    tg_user_id: int,
+    username: str | None,
+    message: str,
+) -> SupportTicketModel:
+    """Создать тикет поддержки."""
+    ticket = SupportTicketModel(
+        user_id=user_id,
+        tg_user_id=tg_user_id,
+        username=username,
+        message=message,
+        status="open",
+    )
+    session.add(ticket)
+    await session.commit()
+    await session.refresh(ticket)
+    return ticket
+
+
+async def get_open_tickets(
+    session: AsyncSession,
+    limit: int = 50,
+) -> list[SupportTicketModel]:
+    """Получить список открытых тикетов."""
+    result = await session.scalars(
+        select(SupportTicketModel)
+        .where(SupportTicketModel.status.in_(["open", "in_progress"]))
+        .order_by(SupportTicketModel.created_at.desc())
+        .limit(limit)
+    )
+    return list(result)
+
+
+async def get_ticket_by_id(
+    session: AsyncSession,
+    ticket_id: int,
+) -> SupportTicketModel | None:
+    """Получить тикет по ID."""
+    return await session.scalar(
+        select(SupportTicketModel).where(SupportTicketModel.id == ticket_id)
+    )
+
+
+async def reply_to_ticket(
+    session: AsyncSession,
+    *,
+    ticket_id: int,
+    response: str,
+    responded_by_tg_id: int,
+) -> SupportTicketModel | None:
+    """Ответить на тикет."""
+    ticket = await get_ticket_by_id(session, ticket_id)
+    if not ticket:
+        return None
+    
+    ticket.response = response
+    ticket.responded_by_tg_id = responded_by_tg_id
+    ticket.responded_at = datetime.now(UTC).replace(tzinfo=None)
+    ticket.status = "closed"
+    await session.commit()
+    return ticket
+
+
+async def close_ticket(
+    session: AsyncSession,
+    ticket_id: int,
+) -> bool:
+    """Закрыть тикет без ответа."""
+    ticket = await get_ticket_by_id(session, ticket_id)
+    if not ticket:
+        return False
+    
+    ticket.status = "closed"
+    await session.commit()
+    return True
+
+
+async def count_open_tickets(session: AsyncSession) -> int:
+    """Количество открытых тикетов."""
+    return int(
+        await session.scalar(
+            select(func.count(SupportTicketModel.id)).where(
+                SupportTicketModel.status.in_(["open", "in_progress"])
+            )
+        )
+        or 0
     )
