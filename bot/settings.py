@@ -27,6 +27,7 @@ class PostgresSettings:
 
 class Settings:
     bot_token: str = os.environ.get("BOT_TOKEN", "")
+    provider_token: str = os.environ.get("PROVIDER_TOKEN", "")
     developer_id: int = int(os.environ.get("DEVELOPER_ID", 0))
     admin_ids_str: str = os.environ.get("ADMIN_IDS", "")
     dev: bool = os.environ.get("DEV", "false").lower() == "true"

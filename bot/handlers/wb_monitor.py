@@ -49,6 +49,7 @@ from bot.keyboards.inline import (
     admin_config_input_kb,
     admin_config_kb,
     admin_panel_kb,
+    payment_choice_kb,
     plan_kb,
     paged_track_kb,
     ref_kb,
@@ -1119,6 +1120,59 @@ async def wb_plan_cb(cb: CallbackQuery, session: AsyncSession) -> None:
             expires_str,
             pay_btn_text=_pay_button_text(discount),
         ),
+    )
+
+
+@router.callback_query(F.data == "wbm:pay:choice")
+async def wb_pay_choice_cb(cb: CallbackQuery, session: AsyncSession) -> None:
+    """Показать выбор способа оплаты."""
+    user = await get_or_create_monitor_user(
+        session, cb.from_user.id, cb.from_user.username
+    )
+    now = datetime.now(UTC).replace(tzinfo=None)
+    discount = await get_user_active_discount(session, user_id=user.id, now=now)
+    
+    await cb.message.edit_text(
+        tx.PAYMENT_METHOD_CHOICE,
+        reply_markup=payment_choice_kb(discount),
+    )
+
+
+@router.callback_query(F.data == "wbm:pay:card")
+async def wb_pay_card_cb(cb: CallbackQuery, session: AsyncSession) -> None:
+    """Оплата картой через Telegram Payments."""
+    from aiogram.types import LabeledPrice
+    
+    if not se.provider_token:
+        await cb.answer("❌ Оплата картой временно недоступна", show_alert=True)
+        return
+    
+    user = await get_or_create_monitor_user(
+        session, cb.from_user.id, cb.from_user.username
+    )
+    now = datetime.now(UTC).replace(tzinfo=None)
+    discount = await get_user_active_discount(session, user_id=user.id, now=now)
+    
+    # Сумма в рублях (или другой валюте провайдера)
+    amount_rub = (
+        max(1, int(round(150 * (100 - discount.percent) / 100))) if discount else 150
+    )
+    
+    payload = _build_payment_payload(
+        amount=amount_rub,
+        discount_activation_id=(discount.activation_id if discount else None),
+    )
+    
+    description = tx.PAYMENT_CARD_DESCRIPTION.format(amount=amount_rub)
+    label = f"Pro ({amount_rub}₽)"
+    
+    await cb.message.answer_invoice(
+        title=tx.PAYMENT_TITLE,
+        description=description,
+        payload=payload,
+        currency="RUB",
+        prices=[LabeledPrice(label=label, amount=amount_rub * 100)],  # в копейках
+        provider_token=se.provider_token,
     )
 
 

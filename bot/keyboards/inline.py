@@ -196,7 +196,7 @@ def plan_kb(
                 # success — зелёный для кнопки оплаты (Bot API 9.4)
                 InlineKeyboardButton(
                     text=pay_btn_text or tx.BTN_PAY_PRO,
-                    callback_data="wbm:pay:stars",
+                    callback_data="wbm:pay:choice",
                     style="success",
                 )
             ]
@@ -216,6 +216,30 @@ def plan_kb(
         )
 
     rows.append([_btn(tx.BTN_BACK_MENU, "wbm:home:0")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def payment_choice_kb(discount: object | None = None) -> InlineKeyboardMarkup:
+    """Клавиатура выбора способа оплаты."""
+    rows: list[list[InlineKeyboardButton]] = []
+    
+    # Оплата картой
+    if discount:
+        card_amount = max(1, int(round(150 * (100 - discount.percent) / 100)))
+        card_text = tx.BTN_PAY_CARD_DISCOUNT.format(amount=card_amount, percent=discount.percent)
+    else:
+        card_text = tx.BTN_PAY_CARD
+    rows.append([_btn(card_text, "wbm:pay:card", style="primary")])
+    
+    # Оплата звёздами
+    if discount:
+        stars_amount = max(1, int(round(150 * (100 - discount.percent) / 100)))
+        stars_text = tx.BTN_PAY_PRO_DISCOUNT.format(amount=stars_amount, percent=discount.percent)
+    else:
+        stars_text = tx.BTN_PAY_STARS
+    rows.append([_btn(stars_text, "wbm:pay:stars")])
+    
+    rows.append([_btn(tx.BTN_BACK, "wbm:plan:0")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
