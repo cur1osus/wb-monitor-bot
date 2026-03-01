@@ -151,6 +151,7 @@ def settings_kb(
     has_sizes: bool = True,
     pro_plan: bool = False,
     qty_on: bool = False,
+    stock_on: bool = True,
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = [
         [
@@ -161,6 +162,10 @@ def settings_kb(
             _btn(tx.BTN_RESET_DROP, f"wbm:drop_reset:{track_id}"),
         ],
     ]
+    # Кнопка уведомлений о наличии (доступна всем)
+    stock_style = "success" if stock_on else None
+    stock_label = tx.STOCK_ON_LABEL if stock_on else tx.STOCK_OFF_LABEL
+    rows.append([_btn(stock_label, f"wbm:stock:{track_id}", style=stock_style)])
     if pro_plan:
         qty_style = "success" if qty_on else None
         qty_label = tx.QTY_ON_LABEL if qty_on else tx.QTY_OFF_LABEL

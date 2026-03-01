@@ -1075,6 +1075,7 @@ async def wb_settings_cb(cb: CallbackQuery, session: AsyncSession) -> None:
             has_sizes=bool(track.watch_sizes),
             pro_plan=user.plan == "pro",
             qty_on=track.watch_qty,
+            stock_on=track.watch_stock,
         ),
     )
 
@@ -2081,6 +2082,7 @@ async def wb_settings_targets_msg(
                 has_sizes=bool(track.last_sizes),
                 pro_plan=user.plan == "pro",
                 qty_on=track.watch_qty,
+                stock_on=track.watch_stock,
             ),
         )
         await state.clear()
@@ -2112,6 +2114,7 @@ async def wb_settings_targets_msg(
             has_sizes=bool(track.last_sizes),
             pro_plan=user.plan == "pro",
             qty_on=track.watch_qty,
+            stock_on=track.watch_stock,
         ),
     )
 
@@ -2139,6 +2142,7 @@ async def wb_settings_price_reset_cb(cb: CallbackQuery, session: AsyncSession) -
             has_sizes=bool(track.last_sizes),
             pro_plan=user.plan == "pro",
             qty_on=track.watch_qty,
+            stock_on=track.watch_stock,
         ),
     )
     await cb.answer(tx.SETTINGS_PRICE_RESET_DONE)
@@ -2165,6 +2169,7 @@ async def wb_settings_drop_reset_cb(cb: CallbackQuery, session: AsyncSession) ->
             has_sizes=bool(track.last_sizes),
             pro_plan=user.plan == "pro",
             qty_on=track.watch_qty,
+            stock_on=track.watch_stock,
         ),
     )
     await cb.answer(tx.SETTINGS_DROP_RESET_DONE)
@@ -2197,6 +2202,7 @@ async def wb_settings_qty_cb(cb: CallbackQuery, session: AsyncSession) -> None:
                 has_sizes=bool(track.watch_sizes),
                 pro_plan=True,
                 qty_on=track.watch_qty,
+                stock_on=track.watch_stock,
             ),
         )
     except TelegramBadRequest:
@@ -2208,6 +2214,46 @@ async def wb_settings_qty_cb(cb: CallbackQuery, session: AsyncSession) -> None:
                 tx.SETTINGS_QTY_STATE_ON
                 if track.watch_qty
                 else tx.SETTINGS_QTY_STATE_OFF
+            )
+        )
+    )
+
+
+@router.callback_query(F.data.regexp(r"wbm:stock:(\d+)"))
+async def wb_settings_stock_cb(cb: CallbackQuery, session: AsyncSession) -> None:
+    track_id = int(cb.data.split(":")[2])
+    user = await get_or_create_monitor_user(
+        session, cb.from_user.id, cb.from_user.username
+    )
+
+    track = await get_user_track_by_id(session, track_id)
+    if not track:
+        await cb.answer(tx.TRACK_NOT_FOUND, show_alert=True)
+        return
+
+    track.watch_stock = not track.watch_stock
+    await session.commit()
+
+    try:
+        await cb.message.edit_text(
+            format_track_text(track) + tx.SETTINGS_SUFFIX,
+            reply_markup=settings_kb(
+                track_id,
+                has_sizes=bool(track.watch_sizes),
+                pro_plan=user.plan == "pro",
+                qty_on=track.watch_qty,
+                stock_on=track.watch_stock,
+            ),
+        )
+    except TelegramBadRequest:
+        pass
+
+    await cb.answer(
+        tx.SETTINGS_STOCK_ANSWER.format(
+            state=(
+                tx.SETTINGS_STOCK_STATE_ON
+                if track.watch_stock
+                else tx.SETTINGS_STOCK_STATE_OFF
             )
         )
     )
