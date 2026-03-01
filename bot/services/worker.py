@@ -65,6 +65,11 @@ async def run_cycle(
                 if not snap:
                     continue
 
+                logger.info(
+                    "TRACK_CHECK: track_id=%s, wb_item_id=%s, last_in_stock=%s, snap.in_stock=%s",
+                    t.id, t.wb_item_id, t.last_in_stock, snap.in_stock
+                )
+
                 async with db_session.begin_nested():
                     events: list[str] = []
 
@@ -93,6 +98,10 @@ async def run_cycle(
                         )
 
                     if t.watch_stock and t.last_in_stock is False and snap.in_stock:
+                        logger.info(
+                            "IN_STOCK_EVENT: track_id=%s, last_in_stock=%s, snap.in_stock=%s",
+                            t.id, t.last_in_stock, snap.in_stock
+                        )
                         events.append(_msg("in_stock", track_id=t.id))
 
                     if (
@@ -162,6 +171,7 @@ async def run_cycle(
                     t.last_sizes = snap.sizes
                     t.last_checked_at = now
                     t.error_count = 0
+                    logger.info("TRACK_UPDATED: track_id=%s, last_in_stock=%s", t.id, t.last_in_stock)
 
             except Exception:
                 logger.exception("WB monitor track failed (track_id=%s)", track_id)
