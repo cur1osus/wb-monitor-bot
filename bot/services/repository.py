@@ -20,6 +20,7 @@ from bot.db.models import (
     RuntimeConfigModel,
     SnapshotModel,
     SupportTicketModel,
+    SupportTicketPhotoModel,
     TrackModel,
 )
 from bot.db.redis import MonitorUserRD
@@ -798,3 +799,28 @@ async def count_open_tickets(session: AsyncSession) -> int:
         )
         or 0
     )
+
+
+async def add_ticket_photo(
+    session: AsyncSession,
+    *,
+    ticket_id: int,
+    file_id: str,
+    file_unique_id: str,
+    width: int | None = None,
+    height: int | None = None,
+    file_size: int | None = None,
+) -> SupportTicketPhotoModel:
+    """Добавить фото к тикету поддержки."""
+    photo = SupportTicketPhotoModel(
+        ticket_id=ticket_id,
+        file_id=file_id,
+        file_unique_id=file_unique_id,
+        width=width,
+        height=height,
+        file_size=file_size,
+    )
+    session.add(photo)
+    await session.commit()
+    await session.refresh(photo)
+    return photo

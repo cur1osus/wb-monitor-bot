@@ -349,6 +349,16 @@ def support_cancel_kb() -> InlineKeyboardMarkup:
     )
 
 
+def support_media_confirmation_kb(photo_count: int = 0) -> InlineKeyboardMarkup:
+    """Клавиатура подтверждения отправки тикета с медиа."""
+    kb = [
+        [_btn(tx.BTN_SUPPORT_SEND, "wbm:support:send", style="success")],
+        [_btn(tx.BTN_SUPPORT_ADD_MORE, "wbm:support:add_more")],
+        [_btn(tx.BTN_SUPPORT_CANCEL, "wbm:support:cancel")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=kb)
+
+
 def admin_support_ticket_kb(ticket_id: int) -> InlineKeyboardMarkup:
     """Клавиатура для админа при просмотре тикета."""
     return InlineKeyboardMarkup(

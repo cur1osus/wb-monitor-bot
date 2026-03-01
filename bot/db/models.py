@@ -246,3 +246,34 @@ class SupportTicketModel(Base):
     )
 
     user: Mapped[MonitorUserModel] = relationship()
+    photos: Mapped[list[SupportTicketPhotoModel]] = relationship(
+        back_populates="ticket", cascade="all, delete-orphan"
+    )
+
+
+class SupportTicketPhotoModel(Base):
+    """Фото, прикрепленные к тикету поддержки."""
+
+    __tablename__ = "monitor_support_ticket_photos"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ticket_id: Mapped[int] = mapped_column(
+        ForeignKey("monitor_support_tickets.id", ondelete="CASCADE"), index=True
+    )
+
+    # file_id фото в Telegram (можно использовать для повторной отправки)
+    file_id: Mapped[str] = mapped_column(String(500), nullable=False)
+    # Уникальный ID файла (для скачивания)
+    file_unique_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    # Размеры фото
+    width: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    height: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Размер файла (приблизительно)
+    file_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(UTC).replace(tzinfo=None),
+    )
+
+    ticket: Mapped[SupportTicketModel] = relationship(back_populates="photos")

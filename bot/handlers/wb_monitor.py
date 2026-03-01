@@ -20,6 +20,7 @@ from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    InputMediaPhoto,
     LinkPreviewOptions,
     Message,
     PreCheckoutQuery,
@@ -57,6 +58,7 @@ from bot.keyboards.inline import (
     settings_kb,
     support_kb,
     support_cancel_kb,
+    support_media_confirmation_kb,
 )
 from bot.services.repository import (
     ActiveDiscount,
@@ -397,7 +399,8 @@ class SettingsState(StatesGroup):
 
 
 class SupportState(StatesGroup):
-    waiting_for_message = State()
+    waiting_for_message_or_media = State()  # Ожидание текста или фото
+    waiting_for_media_confirmation = State()  # Подтверждение завершения добавления фото
     waiting_for_admin_reply = State()
 
 
@@ -2392,6 +2395,7 @@ from bot.services.repository import (
     reply_to_ticket,
     close_ticket,
     count_open_tickets,
+    add_ticket_photo,
 )
 
 
@@ -2418,10 +2422,11 @@ async def wb_help_cb(cb: CallbackQuery, session: AsyncSession) -> None:
 
 @router.callback_query(F.data == "wbm:support:start")
 async def wb_support_start_cb(cb: CallbackQuery, state: FSMContext) -> None:
-    """Начать создание тикета."""
-    await state.set_state(SupportState.waiting_for_message)
+    """Начать создание тикета — сбросить состояние и показать подсказку."""
+    await state.set_state(SupportState.waiting_for_message_or_media)
+    await state.update_data(photos=[], message_text=None)
     await cb.message.edit_text(
-        tx.SUPPORT_PROMPT,
+        tx.SUPPORT_PROMPT_WITH_MEDIA,
         reply_markup=support_cancel_kb(),
     )
 
@@ -2436,42 +2441,171 @@ async def wb_support_cancel_cb(cb: CallbackQuery, state: FSMContext) -> None:
     await wb_home_cb(cb)
 
 
-@router.message(SupportState.waiting_for_message, F.text)
-async def wb_support_message_msg(
-    msg: Message, state: FSMContext, session: AsyncSession, bot: Bot
+@router.message(SupportState.waiting_for_message_or_media, F.text)
+async def wb_support_text_msg(
+    msg: Message, state: FSMContext, session: AsyncSession
 ) -> None:
-    """Получить сообщение для тикета и создать его."""
+    """Получить текст сообщения для тикета."""
+    data = await state.get_data()
+    photos = data.get("photos", [])
+    
+    # Сохраняем текст
+    await state.update_data(message_text=msg.text)
+    
+    # Переходим в состояние подтверждения
+    await state.set_state(SupportState.waiting_for_media_confirmation)
+    
+    if photos:
+        await msg.answer(
+            tx.SUPPORT_MEDIA_ADDED.format(count=len(photos)),
+            reply_markup=support_media_confirmation_kb(),
+        )
+    else:
+        # Только текст, без фото
+        await msg.answer(
+            f"📝 <b>Сообщение:</b>\n{msg.text[:500]}{'...' if len(msg.text) > 500 else ''}\n\n"
+            f"{tx.SUPPORT_CONFIRM_SEND}",
+            reply_markup=support_media_confirmation_kb(),
+        )
+
+
+@router.message(SupportState.waiting_for_message_or_media, F.photo)
+async def wb_support_photo_msg(
+    msg: Message, state: FSMContext, session: AsyncSession
+) -> None:
+    """Получить фото для тикета."""
+    data = await state.get_data()
+    photos = data.get("photos", [])
+    message_text = data.get("message_text")
+    
+    # Берем фото максимального качества (последнее в списке)
+    photo = msg.photo[-1]
+    photos.append({
+        "file_id": photo.file_id,
+        "file_unique_id": photo.file_unique_id,
+        "width": photo.width,
+        "height": photo.height,
+        "file_size": photo.file_size,
+    })
+    
+    await state.update_data(photos=photos)
+    
+    # Переходим в состояние подтверждения
+    await state.set_state(SupportState.waiting_for_media_confirmation)
+    
+    text = tx.SUPPORT_MEDIA_ADDED.format(count=len(photos))
+    if message_text:
+        text = f"📝 <b>Сообщение:</b>\n{message_text[:300]}{'...' if len(message_text) > 300 else ''}\n\n{text}"
+    
+    await msg.answer(
+        text,
+        reply_markup=support_media_confirmation_kb(),
+    )
+
+
+@router.message(SupportState.waiting_for_message_or_media)
+async def wb_support_invalid_msg(msg: Message) -> None:
+    """Обработать некорректное сообщение (не текст и не фото)."""
+    await msg.answer(tx.SUPPORT_NO_TEXT_NO_MEDIA)
+
+
+@router.callback_query(F.data == "wbm:support:add_more")
+async def wb_support_add_more_cb(cb: CallbackQuery, state: FSMContext) -> None:
+    """Пользователь хочет добавить ещё фото."""
+    await state.set_state(SupportState.waiting_for_message_or_media)
+    await cb.message.edit_text(
+        tx.SUPPORT_PROMPT_WITH_MEDIA + "\n\n<i>Отправьте следующее фото:</i>",
+        reply_markup=support_cancel_kb(),
+    )
+
+
+@router.callback_query(F.data == "wbm:support:send")
+async def wb_support_send_cb(
+    cb: CallbackQuery, state: FSMContext, session: AsyncSession, bot: Bot
+) -> None:
+    """Отправить тикет с фото и/или текстом."""
+    data = await state.get_data()
+    photos = data.get("photos", [])
+    message_text = data.get("message_text")
+    
+    # Проверяем что есть что отправлять
+    if not message_text and not photos:
+        await cb.answer(tx.SUPPORT_NO_TEXT_NO_MEDIA, show_alert=True)
+        return
+    
     user = await get_or_create_monitor_user(
-        session, msg.from_user.id, msg.from_user.username
+        session, cb.from_user.id, cb.from_user.username
     )
     
     # Создаём тикет
     ticket = await create_support_ticket(
         session,
         user_id=user.id,
-        tg_user_id=msg.from_user.id,
-        username=msg.from_user.username,
-        message=msg.text,
+        tg_user_id=cb.from_user.id,
+        username=cb.from_user.username,
+        message=message_text or "(без текста, только фото)",
     )
     
+    # Сохраняем фото
+    for photo_data in photos:
+        await add_ticket_photo(
+            session,
+            ticket_id=ticket.id,
+            file_id=photo_data["file_id"],
+            file_unique_id=photo_data["file_unique_id"],
+            width=photo_data["width"],
+            height=photo_data["height"],
+            file_size=photo_data["file_size"],
+        )
+    
     await state.clear()
-    await msg.answer(tx.SUPPORT_SENT, reply_markup=dashboard_kb(is_admin(msg.from_user.id, se)))
+    await cb.message.edit_text(tx.SUPPORT_SENT)
+    await cb.message.answer(
+        tx.SUPPORT_SENT,
+        reply_markup=dashboard_kb(is_admin(cb.from_user.id, se)),
+    )
     
     # Уведомляем админов о новом тикете
     admin_ids = se.admin_ids_list or {se.developer_id}
     for admin_id in admin_ids:
         try:
             username_display = f"@{ticket.username}" if ticket.username else f"ID:{ticket.tg_user_id}"
-            await bot.send_message(
-                admin_id,
-                tx.SUPPORT_ADMIN_NOTIFY.format(
-                    username=username_display,
-                    user_id=ticket.tg_user_id,
-                    created_at=ticket.created_at.strftime("%d.%m.%Y %H:%M"),
-                    message=ticket.message,
-                ),
-                reply_markup=admin_support_ticket_kb(ticket.id),
-            )
+            
+            # Отправляем уведомление с фото (media group или отдельно)
+            if photos:
+                # Отправляем фото группой, если их несколько
+                if len(photos) > 1:
+                    media_group = [
+                        InputMediaPhoto(media=p["file_id"])
+                        for p in photos[:10]  # max 10 для альбома
+                    ]
+                    await bot.send_media_group(admin_id, media=media_group)
+                elif photos:
+                    await bot.send_photo(admin_id, photo=photos[0]["file_id"])
+                
+                # Затем отправляем текст с информацией о тикете
+                await bot.send_message(
+                    admin_id,
+                    tx.SUPPORT_ADMIN_NOTIFY.format(
+                        username=username_display,
+                        user_id=ticket.tg_user_id,
+                        created_at=ticket.created_at.strftime("%d.%m.%Y %H:%M"),
+                        message=ticket.message,
+                    ),
+                    reply_markup=admin_support_ticket_kb(ticket.id),
+                )
+            else:
+                # Только текст
+                await bot.send_message(
+                    admin_id,
+                    tx.SUPPORT_ADMIN_NOTIFY.format(
+                        username=username_display,
+                        user_id=ticket.tg_user_id,
+                        created_at=ticket.created_at.strftime("%d.%m.%Y %H:%M"),
+                        message=ticket.message,
+                    ),
+                    reply_markup=admin_support_ticket_kb(ticket.id),
+                )
         except Exception as e:
             logger.warning("Failed to notify admin %s about ticket: %s", admin_id, e)
     
