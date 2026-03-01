@@ -1118,7 +1118,7 @@ async def wb_plan_cb(cb: CallbackQuery, session: AsyncSession) -> None:
         reply_markup=plan_kb(
             is_pro,
             expires_str,
-            pay_btn_text=_pay_button_text(discount),
+            discount=discount,
         ),
     )
 

@@ -187,20 +187,23 @@ def plan_kb(
     is_pro: bool,
     expires_str: str | None = None,
     pay_btn_text: str | None = None,
+    discount: object | None = None,
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
 
     if not is_pro:
-        rows.append(
-            [
-                # success — зелёный для кнопки оплаты (Bot API 9.4)
-                InlineKeyboardButton(
-                    text=pay_btn_text or tx.BTN_PAY_PRO,
-                    callback_data="wbm:pay:choice",
-                    style="success",
-                )
-            ]
-        )
+        # Две кнопки оплаты сразу: карта и звёзды
+        if discount:
+            card_amount = max(1, int(round(150 * (100 - discount.percent) / 100)))
+            card_text = tx.BTN_PAY_CARD_DISCOUNT.format(amount=card_amount, percent=discount.percent)
+            stars_amount = max(1, int(round(150 * (100 - discount.percent) / 100)))
+            stars_text = tx.BTN_PAY_PRO_DISCOUNT.format(amount=stars_amount, percent=discount.percent)
+        else:
+            card_text = tx.BTN_PAY_CARD
+            stars_text = tx.BTN_PAY_PRO
+        
+        rows.append([_btn(card_text, "wbm:pay:card", style="primary")])
+        rows.append([_btn(stars_text, "wbm:pay:stars")])
     else:
         rows.append(
             [
