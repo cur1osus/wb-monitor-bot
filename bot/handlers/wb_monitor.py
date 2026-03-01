@@ -1307,14 +1307,6 @@ async def wb_ref_cb(cb: CallbackQuery, session: AsyncSession) -> None:
     )
 
 
-@router.callback_query(F.data == "wbm:help:0")
-async def wb_help_cb(cb: CallbackQuery) -> None:
-    await cb.message.edit_text(
-        tx.HELP_TEXT,
-        reply_markup=back_to_dashboard_kb(is_admin(cb.from_user.id, se)),
-    )
-
-
 @router.callback_query(F.data == "wbm:admin:0")
 async def wb_admin_cb(
     cb: CallbackQuery, session: AsyncSession, state: FSMContext
