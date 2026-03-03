@@ -32,7 +32,7 @@ PLAN_BADGE_PRO = "⭐ PRO"
 PLAN_BADGE_FREE = "🆓 FREE"
 
 BTN_ADD_ITEM = "➕ Добавить товар"
-BTN_MY_TRACKS = "📋 Мои треки"
+BTN_MY_TRACKS = "📋 Мои товары"
 BTN_PLAN = "💳 Тариф"
 BTN_REFERRAL = "🤝 Реферал"
 BTN_HELP = "❓ Справка"
@@ -139,7 +139,6 @@ PLAN_TEXT = (
     "📦 Треков: {used}/{limit}\n"
     "⏱ Интервал проверок: {interval} мин\n\n"
 )
-PLAN_PRO_ACTIVE = "✅ Pro активен\n"
 PLAN_PRO_UPSELL = (
     "🚀 Обновитесь до <b>PRO</b> — 50 треков, проверка каждые {interval} мин!"
 )

@@ -1119,7 +1119,7 @@ async def wb_plan_cb(cb: CallbackQuery, session: AsyncSession) -> None:
     now = datetime.now(UTC).replace(tzinfo=None)
     discount = await get_user_active_discount(session, user_id=user.id, now=now)
     if is_pro:
-        text += tx.PLAN_PRO_ACTIVE
+        pass
     else:
         text += tx.PLAN_PRO_UPSELL.format(interval=cfg.pro_interval_min)
         if discount:
