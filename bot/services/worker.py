@@ -9,9 +9,10 @@ from typing import TYPE_CHECKING
 
 from aiohttp import ClientSession
 from aiogram.types import LinkPreviewOptions
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from bot.db.models import SnapshotModel
+from bot.db.models import SnapshotModel, TrackModel
 from bot.db.redis import WorkerStateRD
 from bot import text as tx
 from bot.services.repository import (
@@ -169,10 +170,22 @@ async def run_cycle(
 
             except Exception:
                 logger.exception("WB monitor track failed (track_id=%s)", track_id)
-                async with db_session.begin_nested():
-                    t.error_count = (t.error_count or 0) + 1
-                    if t.error_count >= ERROR_LIMIT and t.is_active:
-                        t.is_active = False
+                try:
+                    # Используем прямой SQL UPDATE чтобы избежать lazy load через ORM
+                    # (доступ к атрибутам expir'ованного объекта вызывает MissingGreenlet)
+                    result = await db_session.execute(
+                        update(TrackModel)
+                        .where(TrackModel.id == track_id)
+                        .values(error_count=TrackModel.error_count + 1)
+                        .returning(TrackModel.error_count, TrackModel.is_active)
+                    )
+                    row = result.first()
+                    if row and row.error_count >= ERROR_LIMIT and row.is_active:
+                        await db_session.execute(
+                            update(TrackModel)
+                            .where(TrackModel.id == track_id)
+                            .values(is_active=False)
+                        )
                         try:
                             await bot.send_message(
                                 user_tg_id,
@@ -187,6 +200,10 @@ async def run_cycle(
                             logger.exception(
                                 "WB monitor pause notify failed (track_id=%s)", track_id
                             )
+                except Exception:
+                    logger.exception(
+                        "WB monitor error handler failed (track_id=%s)", track_id
+                    )
 
         await db_session.commit()
 
