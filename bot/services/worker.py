@@ -65,44 +65,72 @@ async def run_cycle(
                     t.id, t.wb_item_id, t.last_in_stock, snap.in_stock
                 )
 
+                # Сначала всегда обновляем last_* и снапшот — НЕЗАВИСИМО от уведомлений.
+                # Это гарантирует, что при следующей проверке не будет повторных событий,
+                # даже если bot.send_message упал (Telegram timeout / rate-limit).
+                db_session.add(
+                    SnapshotModel(
+                        track_id=t.id,
+                        price_current=snap.price,
+                        rating_current=snap.rating,
+                        reviews_current=snap.reviews,
+                        in_stock=snap.in_stock,
+                        qty_current=snap.total_qty,
+                        sizes=snap.sizes,
+                    )
+                )
+                prev_in_stock = t.last_in_stock
+                prev_price = t.last_price
+                prev_qty = t.last_qty
+                prev_sizes = t.last_sizes
+                t.last_price = snap.price
+                t.last_rating = snap.rating
+                t.last_reviews = snap.reviews
+                t.last_in_stock = snap.in_stock
+                t.last_qty = snap.total_qty
+                t.last_sizes = snap.sizes
+                t.last_checked_at = now
+                t.error_count = 0
+                logger.info("TRACK_UPDATED: track_id=%s, last_in_stock=%s", t.id, t.last_in_stock)
+
+                # Теперь вычисляем события на основе предыдущих значений (prev_*).
                 async with db_session.begin_nested():
                     events: list[str] = []
 
                     if (
                         t.watch_price_fluctuation
-                        and t.last_price is not None
+                        and prev_price is not None
                         and snap.price is not None
-                        and snap.price != t.last_price
+                        and snap.price != prev_price
                     ):
                         events.append(
                             _msg(
                                 "price_changed",
-                                old=str(t.last_price),
+                                old=str(prev_price),
                                 new=str(snap.price),
                             )
                         )
 
-
-                    if t.watch_stock and t.last_in_stock is False and snap.in_stock:
+                    if t.watch_stock and prev_in_stock is False and snap.in_stock:
                         logger.info(
-                            "IN_STOCK_EVENT: track_id=%s, last_in_stock=%s, snap.in_stock=%s",
-                            t.id, t.last_in_stock, snap.in_stock
+                            "IN_STOCK_EVENT: track_id=%s, prev_in_stock=%s, snap.in_stock=%s",
+                            t.id, prev_in_stock, snap.in_stock
                         )
                         events.append(_msg("in_stock", track_id=t.id))
 
                     if (
                         t.user.plan == "pro"
                         and t.watch_qty
-                        and t.last_qty is not None
+                        and prev_qty is not None
                         and snap.total_qty is not None
-                        and t.last_qty != snap.total_qty
+                        and prev_qty != snap.total_qty
                     ):
-                        direction = "⬆️" if snap.total_qty > t.last_qty else "⬇️"
+                        direction = "⬆️" if snap.total_qty > prev_qty else "⬇️"
                         events.append(
                             _msg(
                                 "stock_changed",
                                 direction=direction,
-                                old=str(t.last_qty),
+                                old=str(prev_qty),
                                 new=str(snap.total_qty),
                             )
                         )
@@ -110,7 +138,7 @@ async def run_cycle(
                     if t.watch_sizes:
                         watched, prev, curr = (
                             set(t.watch_sizes),
-                            set(t.last_sizes or []),
+                            set(prev_sizes or []),
                             set(snap.sizes),
                         )
                         appeared = sorted(watched & curr - prev)
@@ -138,26 +166,6 @@ async def run_cycle(
                         )
                         t.last_notified_at = now
 
-                    db_session.add(
-                        SnapshotModel(
-                            track_id=t.id,
-                            price_current=snap.price,
-                            rating_current=snap.rating,
-                            reviews_current=snap.reviews,
-                            in_stock=snap.in_stock,
-                            qty_current=snap.total_qty,
-                            sizes=snap.sizes,
-                        )
-                    )
-                    t.last_price = snap.price
-                    t.last_rating = snap.rating
-                    t.last_reviews = snap.reviews
-                    t.last_in_stock = snap.in_stock
-                    t.last_qty = snap.total_qty
-                    t.last_sizes = snap.sizes
-                    t.last_checked_at = now
-                    t.error_count = 0
-                    logger.info("TRACK_UPDATED: track_id=%s, last_in_stock=%s", t.id, t.last_in_stock)
 
             except Exception:
                 logger.exception("WB monitor track failed (track_id=%s)", track_id)
