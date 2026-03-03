@@ -538,7 +538,7 @@ def format_track_text(track: "TrackModel") -> str:
         sizes_line = f"📏 Размеры: {', '.join(track.watch_sizes)}\n"
 
     return (
-        f"📦 <b>{track.title}</b>\n"
+        f"📦 <b><a href=\"{track.url}\">{track.title}</a></b>\n"
         f"<blockquote>Отслеживание цены и наличия товара</blockquote>\n\n"
         f"🔹 Артикул: <code>{track.wb_item_id}</code>\n"
         f"💰 Текущая цена: {current_price}\n"
