@@ -36,11 +36,6 @@ def _msg(key: str, **kw: str | int) -> str:
     return tx.WORKER_EVENTS[key].format(**kw)
 
 
-def _price_drop_percent(old: Decimal | None, new: Decimal | None) -> int:
-    if old is None or new is None or old <= 0 or new >= old:
-        return 0
-    return int(((old - new) / old) * 100)
-
 
 def _hash_event(track_id: int, kind: str, payload: str) -> str:
     return hashlib.sha256(f"{track_id}:{kind}:{payload}".encode()).hexdigest()[:48]
@@ -74,28 +69,19 @@ async def run_cycle(
                     events: list[str] = []
 
                     if (
-                        t.target_price is not None
+                        t.watch_price_fluctuation
+                        and t.last_price is not None
                         and snap.price is not None
-                        and snap.price <= t.target_price
+                        and snap.price != t.last_price
                     ):
                         events.append(
                             _msg(
-                                "price_target",
-                                price=str(snap.price),
-                                target=str(t.target_price),
-                            )
-                        )
-
-                    drop = _price_drop_percent(t.last_price, snap.price)
-                    if t.target_drop_percent and drop >= t.target_drop_percent:
-                        events.append(
-                            _msg(
-                                "price_drop",
-                                percent=str(drop),
+                                "price_changed",
                                 old=str(t.last_price),
                                 new=str(snap.price),
                             )
                         )
+
 
                     if t.watch_stock and t.last_in_stock is False and snap.in_stock:
                         logger.info(

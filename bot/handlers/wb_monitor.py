@@ -1088,6 +1088,7 @@ async def wb_settings_cb(cb: CallbackQuery, session: AsyncSession) -> None:
             pro_plan=user.plan == "pro",
             qty_on=track.watch_qty,
             stock_on=track.watch_stock,
+            price_fluctuation_on=track.watch_price_fluctuation,
         ),
     )
 
@@ -2066,171 +2067,6 @@ async def _hide_settings_prompt_keyboard(msg: Message, state: FSMContext) -> Non
         pass
 
 
-@router.callback_query(F.data.regexp(r"wbm:targets:(\d+)"))
-@router.callback_query(F.data.regexp(r"wbm:price:(\d+)"))
-@router.callback_query(F.data.regexp(r"wbm:drop:(\d+)"))
-async def wb_settings_targets_cb(cb: CallbackQuery, state: FSMContext) -> None:
-    track_id = int(cb.data.split(":")[2])
-    await state.update_data(track_id=track_id, prompt_message_id=cb.message.message_id)
-    await state.set_state(SettingsState.waiting_for_targets)
-
-    cancel_kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=tx.SETTINGS_CANCEL_BTN,
-                    callback_data=f"wbm:settings:{track_id}",
-                )
-            ]
-        ]
-    )
-    await cb.message.edit_text(
-        tx.SETTINGS_TARGETS_PROMPT,
-        reply_markup=cancel_kb,
-    )
-
-
-@router.message(SettingsState.waiting_for_targets, F.text)
-async def wb_settings_targets_msg(
-    msg: Message, state: FSMContext, session: AsyncSession, redis: "Redis"
-) -> None:
-    if not msg.from_user:
-        await state.clear()
-        return
-
-    data = await state.get_data()
-    track_id = data.get("track_id")
-    if not track_id:
-        await state.clear()
-        return
-
-    raw = (msg.text or "").strip().replace(",", ".")
-    is_percent = raw.endswith("%")
-
-    track = await get_user_track_by_id(session, track_id)
-    if not track:
-        await state.clear()
-        return
-
-    user = await get_or_create_monitor_user(
-        session, msg.from_user.id, msg.from_user.username
-    )
-
-    if is_percent:
-        try:
-            val = float(raw[:-1].strip())
-        except ValueError:
-            await msg.answer(tx.SETTINGS_TARGETS_ERROR)
-            return
-
-        if val < 0.1 or val > 99:
-            await msg.answer(tx.SETTINGS_TARGETS_DROP_RANGE_ERROR)
-            return
-
-        new_drop = int(round(val))
-        new_drop = max(1, min(99, new_drop))
-        track.target_drop_percent = new_drop
-        await session.commit()
-        await _hide_settings_prompt_keyboard(msg, state)
-        await msg.answer(
-            tx.SETTINGS_TARGETS_DROP_DONE.format(drop=new_drop, title=track.title),
-            reply_markup=settings_kb(
-                track_id,
-                has_sizes=bool(track.last_sizes),
-                pro_plan=user.plan == "pro",
-                qty_on=track.watch_qty,
-                stock_on=track.watch_stock,
-            ),
-        )
-        await state.clear()
-        return
-
-    try:
-        new_price = float(raw)
-        if new_price < 0:
-            raise ValueError
-    except ValueError:
-        await msg.answer(tx.SETTINGS_TARGETS_ERROR)
-        return
-
-    current = await fetch_product(redis, track.wb_item_id, use_cache=False)
-    current_price = current.price if current and current.price is not None else None
-    if current_price is not None and new_price > float(current_price):
-        await msg.answer(
-            tx.SETTINGS_TARGETS_PRICE_GT_CURRENT.format(current=current_price)
-        )
-        return
-
-    track.target_price = new_price
-    await session.commit()
-    await _hide_settings_prompt_keyboard(msg, state)
-    await msg.answer(
-        tx.SETTINGS_TARGETS_PRICE_DONE.format(title=track.title, price=new_price),
-        reply_markup=settings_kb(
-            track_id,
-            has_sizes=bool(track.last_sizes),
-            pro_plan=user.plan == "pro",
-            qty_on=track.watch_qty,
-            stock_on=track.watch_stock,
-        ),
-    )
-
-    await state.clear()
-
-
-@router.callback_query(F.data.regexp(r"wbm:price_reset:(\d+)"))
-async def wb_settings_price_reset_cb(cb: CallbackQuery, session: AsyncSession) -> None:
-    track_id = int(cb.data.split(":")[2])
-    track = await get_user_track_by_id(session, track_id)
-    if not track:
-        await cb.answer(tx.TRACK_NOT_FOUND, show_alert=True)
-        return
-
-    user = await get_or_create_monitor_user(
-        session, cb.from_user.id, cb.from_user.username
-    )
-    track.target_price = None
-    await session.commit()
-
-    await cb.message.edit_text(
-        format_track_text(track) + tx.SETTINGS_SUFFIX,
-        reply_markup=settings_kb(
-            track_id,
-            has_sizes=bool(track.last_sizes),
-            pro_plan=user.plan == "pro",
-            qty_on=track.watch_qty,
-            stock_on=track.watch_stock,
-        ),
-    )
-    await cb.answer(tx.SETTINGS_PRICE_RESET_DONE)
-
-
-@router.callback_query(F.data.regexp(r"wbm:drop_reset:(\d+)"))
-async def wb_settings_drop_reset_cb(cb: CallbackQuery, session: AsyncSession) -> None:
-    track_id = int(cb.data.split(":")[2])
-    track = await get_user_track_by_id(session, track_id)
-    if not track:
-        await cb.answer(tx.TRACK_NOT_FOUND, show_alert=True)
-        return
-
-    user = await get_or_create_monitor_user(
-        session, cb.from_user.id, cb.from_user.username
-    )
-    track.target_drop_percent = None
-    await session.commit()
-
-    await cb.message.edit_text(
-        format_track_text(track) + tx.SETTINGS_SUFFIX,
-        reply_markup=settings_kb(
-            track_id,
-            has_sizes=bool(track.last_sizes),
-            pro_plan=user.plan == "pro",
-            qty_on=track.watch_qty,
-            stock_on=track.watch_stock,
-        ),
-    )
-    await cb.answer(tx.SETTINGS_DROP_RESET_DONE)
-
 
 @router.callback_query(F.data.regexp(r"wbm:qty:(\d+)"))
 async def wb_settings_qty_cb(cb: CallbackQuery, session: AsyncSession) -> None:
@@ -2260,6 +2096,7 @@ async def wb_settings_qty_cb(cb: CallbackQuery, session: AsyncSession) -> None:
                 pro_plan=True,
                 qty_on=track.watch_qty,
                 stock_on=track.watch_stock,
+                price_fluctuation_on=track.watch_price_fluctuation,
             ),
         )
     except TelegramBadRequest:
@@ -2300,6 +2137,7 @@ async def wb_settings_stock_cb(cb: CallbackQuery, session: AsyncSession) -> None
                 pro_plan=user.plan == "pro",
                 qty_on=track.watch_qty,
                 stock_on=track.watch_stock,
+                price_fluctuation_on=track.watch_price_fluctuation,
             ),
         )
     except TelegramBadRequest:
@@ -2311,6 +2149,47 @@ async def wb_settings_stock_cb(cb: CallbackQuery, session: AsyncSession) -> None
                 tx.SETTINGS_STOCK_STATE_ON
                 if track.watch_stock
                 else tx.SETTINGS_STOCK_STATE_OFF
+            )
+        )
+    )
+
+
+@router.callback_query(F.data.regexp(r"wbm:price_fluctuation:(\d+)"))
+async def wb_settings_price_fluctuation_cb(cb: CallbackQuery, session: AsyncSession) -> None:
+    track_id = int(cb.data.split(":")[2])
+    user = await get_or_create_monitor_user(
+        session, cb.from_user.id, cb.from_user.username
+    )
+
+    track = await get_user_track_by_id(session, track_id)
+    if not track:
+        await cb.answer(tx.TRACK_NOT_FOUND, show_alert=True)
+        return
+
+    track.watch_price_fluctuation = not track.watch_price_fluctuation
+    await session.commit()
+
+    try:
+        await cb.message.edit_text(
+            format_track_text(track) + tx.SETTINGS_SUFFIX,
+            reply_markup=settings_kb(
+                track_id,
+                has_sizes=bool(track.watch_sizes),
+                pro_plan=user.plan == "pro",
+                qty_on=track.watch_qty,
+                stock_on=track.watch_stock,
+                price_fluctuation_on=track.watch_price_fluctuation,
+            ),
+        )
+    except TelegramBadRequest:
+        pass
+
+    await cb.answer(
+        tx.SETTINGS_PRICE_FLUCTUATION_ANSWER.format(
+            state=(
+                tx.SETTINGS_PRICE_FLUCTUATION_STATE_ON
+                if track.watch_price_fluctuation
+                else tx.SETTINGS_PRICE_FLUCTUATION_STATE_OFF
             )
         )
     )

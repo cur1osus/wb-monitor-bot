@@ -81,6 +81,11 @@ QTY_ON_LABEL = "📦 Остаток: вкл"
 QTY_OFF_LABEL = "📦 Остаток: выкл"
 STOCK_ON_LABEL = "🔔 Наличие: вкл"
 STOCK_OFF_LABEL = "🔕 Наличие: выкл"
+PRICE_FLUCTUATION_ON_LABEL = "📈 Колебания цены: вкл"
+PRICE_FLUCTUATION_OFF_LABEL = "📉 Колебания цены: выкл"
+SETTINGS_PRICE_FLUCTUATION_ANSWER = "Колебания цены: {state}"
+SETTINGS_PRICE_FLUCTUATION_STATE_ON = "ВКЛ"
+SETTINGS_PRICE_FLUCTUATION_STATE_OFF = "ВЫКЛ"
 REFERRAL_SHARE_TEXT = "WB Monitor — отслеживай цены на Wildberries!"
 
 ADD_ITEM_PROMPT = (
@@ -355,8 +360,7 @@ SETTINGS_SIZES_DONE = "✅ Размеры для отслеживания обн
 START_REF_LINKED = "✅ Вы подключены по реферальной ссылке."
 
 WORKER_EVENTS: dict[str, str] = {
-    "price_target": "💸 Цена достигла цели: {price} ₽ (цель: {target} ₽)",
-    "price_drop": "📉 Падение цены на {percent}%: {old} ₽ → {new} ₽",
+    "price_changed": "💰 Цена изменилась: {old} ₽ → {new} ₽",
     "in_stock": "✅ Товар снова в наличии (track: {track_id})",
     "stock_changed": "📦 Остаток изменился {direction}: {old} → {new}",
     "sizes_appeared": "📏 Появились размеры: {sizes}",
@@ -528,12 +532,6 @@ def format_track_text(track: "TrackModel") -> str:
         if track.last_rating is not None
         else "—"
     )
-    target_price = f"{track.target_price} ₽" if track.target_price is not None else "—"
-    drop = (
-        f"{track.target_drop_percent}%"
-        if track.target_drop_percent is not None
-        else "—"
-    )
     qty = str(track.last_qty) if track.last_qty is not None else "—"
     in_stock = "✅ Есть" if track.last_in_stock else "❌ Нет"
     sizes_line = ""
@@ -548,8 +546,6 @@ def format_track_text(track: "TrackModel") -> str:
         f"⭐ Рейтинг: {rating}\n"
         f"🏪 В наличии: {in_stock}\n"
         f"📊 Остаток: {qty} шт\n"
-        f"🎯 Цель цены: {target_price}\n"
-        f"📉 Порог падения: {drop}\n"
         f"{sizes_line}"
         f"📡 Статус: {status}"
     )

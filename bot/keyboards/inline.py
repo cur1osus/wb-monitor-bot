@@ -152,31 +152,28 @@ def settings_kb(
     pro_plan: bool = False,
     qty_on: bool = False,
     stock_on: bool = True,
+    price_fluctuation_on: bool = True,
 ) -> InlineKeyboardMarkup:
-    rows: list[list[InlineKeyboardButton]] = [
-        [
-            _btn(tx.BTN_TARGETS, f"wbm:targets:{track_id}", style="primary"),
-        ],
-        [
-            _btn(tx.BTN_RESET_TARGET, f"wbm:price_reset:{track_id}"),
-            _btn(tx.BTN_RESET_DROP, f"wbm:drop_reset:{track_id}"),
-        ],
-    ]
+    rows: list[list[InlineKeyboardButton]] = []
     # Кнопка уведомлений о наличии (доступна всем)
     stock_style = "success" if stock_on else None
     stock_label = tx.STOCK_ON_LABEL if stock_on else tx.STOCK_OFF_LABEL
     rows.append([_btn(stock_label, f"wbm:stock:{track_id}", style=stock_style)])
+    # Кнопка отслеживания колебаний цены (доступна всем)
+    fluctuation_style = "success" if price_fluctuation_on else None
+    fluctuation_label = (
+        tx.PRICE_FLUCTUATION_ON_LABEL if price_fluctuation_on else tx.PRICE_FLUCTUATION_OFF_LABEL
+    )
+    rows.append(
+        [_btn(fluctuation_label, f"wbm:price_fluctuation:{track_id}", style=fluctuation_style)]
+    )
     if pro_plan:
         qty_style = "success" if qty_on else None
         qty_label = tx.QTY_ON_LABEL if qty_on else tx.QTY_OFF_LABEL
         rows.append([_btn(qty_label, f"wbm:qty:{track_id}", style=qty_style)])
     if has_sizes:
         rows.append([_btn(tx.BTN_SIZES, f"wbm:sizes:{track_id}")])
-    rows.extend(
-        [
-            [_btn(tx.BTN_BACK, f"wbm:back:{track_id}")],
-        ]
-    )
+    rows.append([_btn(tx.BTN_BACK, f"wbm:back:{track_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

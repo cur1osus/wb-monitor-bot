@@ -75,11 +75,9 @@ class TrackModel(Base):
     url: Mapped[str] = mapped_column(Text)
     title: Mapped[str] = mapped_column(Text)
 
-    target_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
-    target_drop_percent: Mapped[int | None] = mapped_column(Integer, nullable=True)
-
     watch_stock: Mapped[bool] = mapped_column(Boolean, default=True)
     watch_qty: Mapped[bool] = mapped_column(Boolean, default=False)
+    watch_price_fluctuation: Mapped[bool] = mapped_column(Boolean, default=True)
     watch_sizes: Mapped[list[str]] = mapped_column(JSONB, default=list)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
