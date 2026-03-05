@@ -94,11 +94,13 @@ from bot.services.review_analysis import (
     ReviewAnalysisRateLimitError,
     analyze_reviews_with_llm,
 )
+from bot.services.cheap_ai import rerank_similar_with_llm
 from bot.services.utils import is_admin
 from bot.services.wb_client import (
     extract_wb_item_id,
     fetch_product,
     search_similar_cheaper_title_only,
+    WbSimilarProduct,
     WB_HTTP_HEADERS,
     WB_HTTP_PROXY,
 )
@@ -119,6 +121,38 @@ _WB_ENABLE_SELENIUM_SIMILAR = (
     os.getenv("WB_ENABLE_SELENIUM_SIMILAR", "0").strip().lower()
     in {"1", "true", "yes", "on"}
 )
+
+
+async def _live_filter_cheaper_in_stock(
+    redis: "Redis",
+    candidates: list[WbSimilarProduct],
+    *,
+    current_price: Decimal,
+    limit: int = 12,
+) -> list[WbSimilarProduct]:
+    out: list[WbSimilarProduct] = []
+    for item in candidates:
+        try:
+            snap = await fetch_product(redis, item.wb_item_id, use_cache=False)
+        except Exception:
+            continue
+        if not snap or snap.price is None:
+            continue
+        if not snap.in_stock:
+            continue
+        if snap.price >= current_price:
+            continue
+        out.append(
+            WbSimilarProduct(
+                wb_item_id=item.wb_item_id,
+                title=snap.title or item.title,
+                price=snap.price,
+                url=item.url,
+            )
+        )
+        if len(out) >= limit:
+            break
+    return out
 
 
 def _model_signature(model: str, review_limit: int) -> str:
@@ -849,26 +883,68 @@ async def wb_find_cheaper_cb(
                     match_percent_threshold=cfg.cheap_match_percent,
                     max_price=current.price,
                     exclude_wb_item_id=track.wb_item_id,
-                    limit=12,
+                    limit=20,
                 )
                 if found:
-                    reranked = [
-                        WbSimilarItemRD(
-                            wb_item_id=item.wb_item_id,
-                            title=item.title,
-                            price=str(item.price),
-                            url=item.url,
+                    live_confirmed = await _live_filter_cheaper_in_stock(
+                        redis,
+                        found,
+                        current_price=current.price,
+                        limit=12,
+                    )
+                    if live_confirmed:
+                        llm_ranked = await rerank_similar_with_llm(
+                            api_key=se.agentplatform_api_key,
+                            model=se.agentplatform_model,
+                            api_base_url=se.agentplatform_base_url,
+                            base_title=current.title or track.title,
+                            base_price=str(current.price),
+                            candidates=live_confirmed,
+                            limit=5,
                         )
-                        for item in found[:5]
-                    ]
+                        reranked = [
+                            WbSimilarItemRD(
+                                wb_item_id=item.wb_item_id,
+                                title=item.title,
+                                price=str(item.price),
+                                url=item.url,
+                            )
+                            for item in llm_ranked[:5]
+                        ]
 
             if not reranked:
                 reranked = await _search_wb_loose_alternatives(
                     base_title=current.title or track.title,
                     exclude_wb_item_id=track.wb_item_id,
                     max_price=current.price,
+                    limit=8,
+                )
+
+            if reranked:
+                live_input = [
+                    WbSimilarProduct(
+                        wb_item_id=item.wb_item_id,
+                        title=item.title,
+                        price=Decimal(str(item.price)),
+                        url=item.url,
+                    )
+                    for item in reranked
+                ]
+                live_confirmed = await _live_filter_cheaper_in_stock(
+                    redis,
+                    live_input,
+                    current_price=current.price,
                     limit=5,
                 )
+                reranked = [
+                    WbSimilarItemRD(
+                        wb_item_id=item.wb_item_id,
+                        title=item.title,
+                        price=str(item.price),
+                        url=item.url,
+                    )
+                    for item in live_confirmed[:5]
+                ]
         finally:
             await _stop_spinner(spinner_task)
 
