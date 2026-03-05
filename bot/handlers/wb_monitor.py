@@ -950,7 +950,7 @@ async def wb_find_cheaper_cb(
                             api_base_url=se.agentplatform_base_url,
                             base_title=current.title or track.title,
                             base_price=str(current.price),
-                            candidates=llm_input,
+                            candidates=live_confirmed,
                             limit=10,
                         )
                         reranked = [
