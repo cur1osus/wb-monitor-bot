@@ -304,6 +304,17 @@ def _is_in_stock_product(product: dict[str, object]) -> bool:
     return True
 
 
+def _seller_key(product: dict[str, object]) -> str | None:
+    for key in ("supplierId", "supplierID", "supplier_id", "supplier"):
+        v = product.get(key)
+        if isinstance(v, str) and v.strip():
+            return v.strip().lower()
+        iv = _parse_int(v)
+        if iv is not None:
+            return str(iv)
+    return None
+
+
 def _normalize_match_percent(value: int | None) -> int:
     if value is None:
         return _MIN_CHARACTERISTICS_MATCH_PERCENT
@@ -787,6 +798,7 @@ async def search_similar_cheaper_title_only(
         query = quote_plus(query_text)
         collected: list[WbSimilarProduct] = []
         seen_ids: set[int] = set()
+        best_by_seller: dict[str, WbSimilarProduct] = {}
 
         expanded_limit = max(limit * 4, 20)
 
@@ -821,17 +833,24 @@ async def search_similar_cheaper_title_only(
                         continue
 
                     title = str(product.get("name") or product.get("imt_name") or f"WB #{nm_id}")
-                    collected.append(
-                        WbSimilarProduct(
-                            wb_item_id=nm_id,
-                            title=title,
-                            price=price,
-                            url=f"https://www.wildberries.ru/catalog/{nm_id}/detail.aspx",
-                        )
+                    item = WbSimilarProduct(
+                        wb_item_id=nm_id,
+                        title=title,
+                        price=price,
+                        url=f"https://www.wildberries.ru/catalog/{nm_id}/detail.aspx",
                     )
+
+                    seller = _seller_key(product)
+                    if seller:
+                        prev = best_by_seller.get(seller)
+                        if prev is None or item.price < prev.price:
+                            best_by_seller[seller] = item
+                    else:
+                        collected.append(item)
+
                     seen_ids.add(nm_id)
 
-                    if len(collected) >= expanded_limit:
+                    if (len(collected) + len(best_by_seller)) >= expanded_limit:
                         break
 
                 if len(collected) >= expanded_limit:
@@ -839,8 +858,9 @@ async def search_similar_cheaper_title_only(
             if len(collected) >= expanded_limit:
                 break
 
-        collected.sort(key=lambda p: p.price)
-        return collected[:limit]
+        final_items = collected + list(best_by_seller.values())
+        final_items.sort(key=lambda p: p.price)
+        return final_items[:limit]
 
     if session is None:
         async with ClientSession(headers=WB_HTTP_HEADERS) as new_session:
