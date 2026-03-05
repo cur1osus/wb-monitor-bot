@@ -857,13 +857,45 @@ async def wb_remove_no_cb(
 
 
 @router.callback_query(F.data.regexp(r"wbm:remove_yes:(\d+)"))
-async def wb_remove_yes_cb(cb: CallbackQuery, session: AsyncSession) -> None:
+async def wb_remove_yes_cb(
+    cb: CallbackQuery,
+    session: AsyncSession,
+    redis: "Redis",
+) -> None:
     track_id = int(cb.data.split(":")[2])
-    await delete_track(session, track_id)
-    await session.commit()
+
     user = await get_or_create_monitor_user(
         session, cb.from_user.id, cb.from_user.username
     )
+    tracks_before = await get_user_tracks(session, user.id)
+    removed_index = 0
+    for idx, t in enumerate(tracks_before):
+        if t.id == track_id:
+            removed_index = idx
+            break
+
+    await delete_track(session, track_id)
+    await session.commit()
+
+    tracks_after = await get_user_tracks(session, user.id)
+    if tracks_after:
+        target_idx = min(removed_index, len(tracks_after) - 1)
+        track = tracks_after[target_idx]
+        await cb.message.edit_text(
+            format_track_text(track),
+            reply_markup=await _track_kb_with_usage(
+                session=session,
+                redis=redis,
+                user_tg_id=cb.from_user.id,
+                user_plan=user.plan,
+                track=track,
+                page=target_idx,
+                total=len(tracks_after),
+            ),
+        )
+        await cb.answer(tx.TRACK_DELETED)
+        return
+
     cfg = runtime_config_view(await get_runtime_config(session))
     used = await count_user_tracks(session, user.id, active_only=True)
     await cb.message.edit_text(
