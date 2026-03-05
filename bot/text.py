@@ -117,7 +117,7 @@ REMOVE_CANCELLED = "Удаление отменено"
 TRACK_DELETED = "Трек удален"
 
 FIND_CHEAPER_TO_LIST_BTN = "◀️ К товару"
-FIND_CHEAPER_PROGRESS = "🔎 Ищу похожие товары дешевле для <b>{title}</b>..."
+FIND_CHEAPER_PROGRESS = "🔎 Ищу похожие товары дешевле для <b>{title}</b>... Это может занять до 1 минуты."
 FIND_CHEAPER_ANSWER = "Ищу варианты..."
 FIND_CHEAPER_PRICE_ERROR = "❌ Не удалось получить текущую цену товара."
 FIND_CHEAPER_EMPTY = (

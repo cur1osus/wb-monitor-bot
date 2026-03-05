@@ -866,7 +866,7 @@ async def wb_find_cheaper_cb(
                 priced.sort(key=lambda item: item.final_price)
 
                 cheaper = [item for item in priced if item.final_price < current.price]
-                selected = cheaper[:5] if cheaper else priced[:5]
+                selected = cheaper[:10] if cheaper else priced[:10]
                 reranked = [
                     WbSimilarItemRD(
                         wb_item_id=item.nm_id,
@@ -890,7 +890,7 @@ async def wb_find_cheaper_cb(
                         redis,
                         found,
                         current_price=current.price,
-                        limit=12,
+                        limit=20,
                     )
                     if live_confirmed:
                         llm_ranked = await rerank_similar_with_llm(
@@ -900,7 +900,7 @@ async def wb_find_cheaper_cb(
                             base_title=current.title or track.title,
                             base_price=str(current.price),
                             candidates=live_confirmed,
-                            limit=5,
+                            limit=10,
                         )
                         reranked = [
                             WbSimilarItemRD(
@@ -909,7 +909,7 @@ async def wb_find_cheaper_cb(
                                 price=str(item.price),
                                 url=item.url,
                             )
-                            for item in llm_ranked[:5]
+                            for item in llm_ranked[:10]
                         ]
 
             if not reranked:
@@ -934,7 +934,7 @@ async def wb_find_cheaper_cb(
                     redis,
                     live_input,
                     current_price=current.price,
-                    limit=5,
+                    limit=10,
                 )
                 reranked = [
                     WbSimilarItemRD(
@@ -943,7 +943,7 @@ async def wb_find_cheaper_cb(
                         price=str(item.price),
                         url=item.url,
                     )
-                    for item in live_confirmed[:5]
+                    for item in live_confirmed[:10]
                 ]
         finally:
             await _stop_spinner(spinner_task)

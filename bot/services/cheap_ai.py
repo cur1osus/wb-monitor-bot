@@ -26,7 +26,7 @@ async def rerank_similar_with_llm(
     base_title: str,
     base_price: str,
     candidates: list[WbSimilarProduct],
-    limit: int = 5,
+    limit: int = 10,
 ) -> list[WbSimilarProduct]:
     """Rerank/filter similar products via LLM.
 
@@ -53,7 +53,7 @@ async def rerank_similar_with_llm(
             "Выбери только функциональные аналоги исходного товара. "
             "Не включай товары из других типов/категорий. "
             "Верни JSON формата: {\"picked\":[{\"id\":123,\"score\":0..100,\"reason\":\"...\"}]}. "
-            "Сортируй picked по убыванию релевантности. Максимум 5."
+            "Сортируй picked по убыванию релевантности. Максимум 10."
         ),
     }
 
