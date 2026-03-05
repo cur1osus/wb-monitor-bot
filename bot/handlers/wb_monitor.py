@@ -32,6 +32,7 @@ from bot.db.models import TrackModel
 from bot.db.redis import (
     FeatureUsageDailyRD,
     MonitorUserRD,
+    QuickReviewInsightsCacheRD,
     WbReviewInsightsCacheRD,
     WbSimilarItemRD,
     WbSimilarSearchCacheRD,
@@ -775,30 +776,66 @@ async def wb_quick_reviews_cb(
         await cb.answer(tx.PRODUCT_FETCH_ERROR, show_alert=True)
         return
 
-    await cb.answer(tx.REVIEWS_ANALYSIS_ANSWER)
+    back_preview_kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=tx.BTN_BACK, callback_data=f"wbm:quick:preview:{wb_item_id}")],
+        ]
+    )
+
+    await cb.answer()
+    await cb.message.edit_text(
+        tx.REVIEWS_ANALYSIS_PROGRESS.format(title=escape(product.title)),
+        reply_markup=back_preview_kb,
+    )
+
     review_limit = 50
     model = se.agentplatform_model.strip()
+    model_signature = _model_signature(model, review_limit)
 
-    try:
-        insights = await analyze_reviews_with_llm(
-            wb_item_id=wb_item_id,
-            product_title=product.title,
-            api_key=se.agentplatform_api_key,
-            model=model,
-            api_base_url=se.agentplatform_base_url,
-            sample_limit_per_side=review_limit,
+    cached = await QuickReviewInsightsCacheRD.get(
+        redis,
+        wb_item_id=wb_item_id,
+        model_signature=model_signature,
+    )
+    if cached is not None:
+        insights = ReviewInsights(
+            strengths=list(cached.strengths),
+            weaknesses=list(cached.weaknesses),
+            positive_samples=int(cached.positive_samples),
+            negative_samples=int(cached.negative_samples),
+            positive_total=int(cached.positive_total),
+            negative_total=int(cached.negative_total),
+            sample_limit_per_side=int(cached.sample_limit_per_side),
         )
-    except (ReviewAnalysisConfigError, ReviewAnalysisError, ReviewAnalysisRateLimitError) as exc:
-        await cb.message.edit_text(str(exc))
-        return
+    else:
+        try:
+            insights = await analyze_reviews_with_llm(
+                wb_item_id=wb_item_id,
+                product_title=product.title,
+                api_key=se.agentplatform_api_key,
+                model=model,
+                api_base_url=se.agentplatform_base_url,
+                sample_limit_per_side=review_limit,
+            )
+        except (ReviewAnalysisConfigError, ReviewAnalysisError, ReviewAnalysisRateLimitError) as exc:
+            await cb.message.edit_text(str(exc), reply_markup=back_preview_kb)
+            return
+
+        await QuickReviewInsightsCacheRD(
+            wb_item_id=wb_item_id,
+            model_signature=model_signature,
+            strengths=list(insights.strengths),
+            weaknesses=list(insights.weaknesses),
+            positive_samples=int(insights.positive_samples),
+            negative_samples=int(insights.negative_samples),
+            positive_total=int(insights.positive_total),
+            negative_total=int(insights.negative_total),
+            sample_limit_per_side=int(insights.sample_limit_per_side),
+        ).save(redis)
 
     await cb.message.edit_text(
         _format_review_insights_text(product.title, insights),
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text=tx.BTN_BACK, callback_data=f"wbm:quick:preview:{wb_item_id}")],
-            ]
-        ),
+        reply_markup=back_preview_kb,
         link_preview_options=LinkPreviewOptions(is_disabled=True),
     )
 
@@ -836,7 +873,21 @@ async def wb_quick_searchmode_cb(
         await cb.answer(tx.PRODUCT_FETCH_ERROR, show_alert=True)
         return
 
-    await cb.answer(tx.FIND_CHEAPER_ANSWER)
+    await cb.answer()
+    progress_text = (
+        tx.FIND_CHEAPER_PROGRESS.format(title=escape(product.title))
+        if mode == "cheap"
+        else tx.FIND_SIMILAR_PROGRESS.format(title=escape(product.title))
+    )
+    await cb.message.edit_text(
+        progress_text,
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=tx.BTN_BACK, callback_data=f"wbm:quick:search:{wb_item_id}")],
+            ]
+        ),
+    )
+
     found = await search_similar_cheaper_title_only(
         base_title=product.title,
         match_percent_threshold=None,

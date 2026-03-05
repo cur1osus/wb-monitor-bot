@@ -231,6 +231,42 @@ class WbReviewInsightsCacheRD(_RDBase):
         )
 
 
+# ─── QuickReviewInsightsCacheRD (30 min) ─────────────────────────────────────
+_QUICK_REVIEW_INSIGHTS_TTL: Final[int] = int(timedelta(minutes=30).total_seconds())
+
+
+class QuickReviewInsightsCacheRD(_RDBase):
+    """Короткий кэш LLM-анализа отзывов для quick-flow. TTL 30 минут."""
+
+    wb_item_id: int
+    model_signature: str
+    strengths: list[str] = []
+    weaknesses: list[str] = []
+    positive_samples: int = 0
+    negative_samples: int = 0
+    positive_total: int = 0
+    negative_total: int = 0
+    sample_limit_per_side: int = 50
+
+    @classmethod
+    async def get(
+        cls,
+        redis: Redis,
+        wb_item_id: int,
+        model_signature: str,
+    ) -> "QuickReviewInsightsCacheRD | None":
+        data = await cls._get_raw(redis, wb_item_id, model_signature)
+        return msgspec.msgpack.decode(data, type=cls) if data else None
+
+    async def save(self, redis: Redis) -> None:
+        await self._save_raw(
+            redis,
+            self.wb_item_id,
+            self.model_signature,
+            ttl=_QUICK_REVIEW_INSIGHTS_TTL,
+        )
+
+
 # ─── FeatureUsageDailyRD ──────────────────────────────────────────────────────
 class FeatureUsageDailyRD:
     """Счетчик обращений к тяжелым фичам по дням (UTC)."""
