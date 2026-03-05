@@ -167,29 +167,46 @@ async def _live_filter_cheaper_in_stock(
     base_colors: list[str] | None = None,
     require_cheaper: bool = True,
     limit: int = 12,
+    log_prefix: str | None = None,
 ) -> list[WbSimilarProduct]:
     out: list[WbSimilarProduct] = []
     base_color_groups = _color_groups_from_card(base_colors)
+
+    reason_counts = {
+        "fetch_error": 0,
+        "no_snapshot_or_price": 0,
+        "out_of_stock": 0,
+        "not_cheaper": 0,
+        "kind_mismatch": 0,
+        "color_mismatch": 0,
+        "accepted": 0,
+    }
 
     for item in candidates:
         try:
             snap = await fetch_product(redis, item.wb_item_id, use_cache=False)
         except Exception:
+            reason_counts["fetch_error"] += 1
             continue
         if not snap or snap.price is None:
+            reason_counts["no_snapshot_or_price"] += 1
             continue
         if not snap.in_stock:
+            reason_counts["out_of_stock"] += 1
             continue
         if require_cheaper and snap.price >= current_price:
+            reason_counts["not_cheaper"] += 1
             continue
 
         # Card-level gender/segment proxy from WB kindId
         if base_kind_id is not None and snap.kind_id is not None and snap.kind_id != base_kind_id:
+            reason_counts["kind_mismatch"] += 1
             continue
 
         # Card-level color matching
         item_color_groups = _color_groups_from_card(snap.colors)
         if base_color_groups and item_color_groups and base_color_groups.isdisjoint(item_color_groups):
+            reason_counts["color_mismatch"] += 1
             continue
 
         out.append(
@@ -200,8 +217,24 @@ async def _live_filter_cheaper_in_stock(
                 url=item.url,
             )
         )
+        reason_counts["accepted"] += 1
         if len(out) >= limit:
             break
+
+    if log_prefix:
+        logger.info(
+            "%s live-filter stats: total=%s accepted=%s fetch_error=%s no_snapshot_or_price=%s out_of_stock=%s not_cheaper=%s kind_mismatch=%s color_mismatch=%s",
+            log_prefix,
+            len(candidates),
+            reason_counts["accepted"],
+            reason_counts["fetch_error"],
+            reason_counts["no_snapshot_or_price"],
+            reason_counts["out_of_stock"],
+            reason_counts["not_cheaper"],
+            reason_counts["kind_mismatch"],
+            reason_counts["color_mismatch"],
+        )
+
     return out
 
 
@@ -988,6 +1021,7 @@ async def wb_find_cheaper_cb(
                         base_colors=current.colors,
                         require_cheaper=(mode == "cheap"),
                         limit=20,
+                        log_prefix=f"track_id={track.id} mode={mode} stage=search",
                     )
                     if live_confirmed:
                         llm_ranked = await rerank_similar_with_llm(
@@ -1035,6 +1069,7 @@ async def wb_find_cheaper_cb(
                     base_colors=current.colors,
                     require_cheaper=(mode == "cheap"),
                     limit=10,
+                    log_prefix=f"track_id={track.id} mode={mode} stage=final",
                 )
                 reranked = [
                     WbSimilarItemRD(
