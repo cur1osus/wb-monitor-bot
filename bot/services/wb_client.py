@@ -620,11 +620,33 @@ async def fetch_product(
                 colors=None,
             )
 
-    url = f"https://card.wb.ru/cards/v4/detail?appType=1&curr=rub&dest=-1257786&nm={wb_item_id}"
+    # WB card endpoint is flaky: sometimes returns a product without price.
+    # Try several equivalent endpoints/destinations and prefer a snapshot with price.
+    urls = [
+        f"https://card.wb.ru/cards/v4/detail?appType=1&curr=rub&dest=-1257786&nm={wb_item_id}",
+        f"https://card.wb.ru/cards/v4/detail?appType=1&curr=rub&dest=-1029256&nm={wb_item_id}",
+        f"https://card.wb.ru/cards/detail?appType=1&curr=rub&dest=-1257786&nm={wb_item_id}",
+    ]
+
+    async def run(s: ClientSession) -> WbProductSnapshot | None:
+        best: WbProductSnapshot | None = None
+        for url in urls:
+            try:
+                snap = await _fetch_and_cache(s, redis, url, wb_item_id)
+            except Exception:
+                continue
+            if snap is None:
+                continue
+            if best is None:
+                best = snap
+            if snap.price is not None:
+                return snap
+        return best
+
     if session is None:
         async with ClientSession(headers=WB_HTTP_HEADERS) as new_session:
-            return await _fetch_and_cache(new_session, redis, url, wb_item_id)
-    return await _fetch_and_cache(session, redis, url, wb_item_id)
+            return await run(new_session)
+    return await run(session)
 
 
 def _extract_web_candidate_ids(html_text: str) -> list[int]:
