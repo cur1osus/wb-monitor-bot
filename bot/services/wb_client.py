@@ -300,8 +300,8 @@ def _is_in_stock_product(product: dict[str, object]) -> bool:
         if found_stock_field:
             return total > 0
 
-    # If stock info is absent, keep item (don't over-filter unknowns).
-    return True
+    # Stock is unknown in payload -> treat as out-of-stock to avoid false positives.
+    return False
 
 
 def _seller_key(product: dict[str, object]) -> str | None:
