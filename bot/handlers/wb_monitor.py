@@ -165,6 +165,7 @@ async def _live_filter_cheaper_in_stock(
     current_price: Decimal,
     base_kind_id: int | None = None,
     base_colors: list[str] | None = None,
+    enforce_color: bool = True,
     require_cheaper: bool = True,
     limit: int = 12,
     log_prefix: str | None = None,
@@ -205,7 +206,7 @@ async def _live_filter_cheaper_in_stock(
 
         # Card-level color matching
         item_color_groups = _color_groups_from_card(snap.colors)
-        if base_color_groups and item_color_groups and base_color_groups.isdisjoint(item_color_groups):
+        if enforce_color and base_color_groups and item_color_groups and base_color_groups.isdisjoint(item_color_groups):
             reason_counts["color_mismatch"] += 1
             continue
 
@@ -914,6 +915,7 @@ async def wb_find_cheaper_cb(
     )
 
     cfg = runtime_config_view(await get_runtime_config(session))
+    color_relaxed = False
     use_cache = mode == "cheap"
     cached = await WbSimilarSearchCacheRD.get(redis, track.id) if use_cache else None
     if cached is None or cached.match_percent != cfg.cheap_match_percent:
@@ -956,6 +958,7 @@ async def wb_find_cheaper_cb(
         )
 
         try:
+            color_relaxed = False
             current = await fetch_product(redis, track.wb_item_id, use_cache=False)
             if not current or current.price is None:
                 await cb.message.edit_text(
@@ -1019,10 +1022,27 @@ async def wb_find_cheaper_cb(
                         current_price=current.price,
                         base_kind_id=current.kind_id,
                         base_colors=current.colors,
+                        enforce_color=True,
                         require_cheaper=(mode == "cheap"),
                         limit=20,
                         log_prefix=f"track_id={track.id} mode={mode} stage=search",
                     )
+                    if mode == "similar" and len(live_confirmed) < 3:
+                        relaxed = await _live_filter_cheaper_in_stock(
+                            redis,
+                            found,
+                            current_price=current.price,
+                            base_kind_id=current.kind_id,
+                            base_colors=current.colors,
+                            enforce_color=False,
+                            require_cheaper=False,
+                            limit=20,
+                            log_prefix=f"track_id={track.id} mode={mode} stage=search_relaxed",
+                        )
+                        if len(relaxed) > len(live_confirmed):
+                            live_confirmed = relaxed
+                            color_relaxed = True
+
                     if live_confirmed:
                         llm_ranked = await rerank_similar_with_llm(
                             api_key=se.agentplatform_api_key,
@@ -1067,10 +1087,26 @@ async def wb_find_cheaper_cb(
                     current_price=current.price,
                     base_kind_id=current.kind_id,
                     base_colors=current.colors,
+                    enforce_color=True,
                     require_cheaper=(mode == "cheap"),
                     limit=10,
                     log_prefix=f"track_id={track.id} mode={mode} stage=final",
                 )
+                if mode == "similar" and len(live_confirmed) < 3:
+                    relaxed_final = await _live_filter_cheaper_in_stock(
+                        redis,
+                        live_input,
+                        current_price=current.price,
+                        base_kind_id=current.kind_id,
+                        base_colors=current.colors,
+                        enforce_color=False,
+                        require_cheaper=False,
+                        limit=10,
+                        log_prefix=f"track_id={track.id} mode={mode} stage=final_relaxed",
+                    )
+                    if len(relaxed_final) > len(live_confirmed):
+                        live_confirmed = relaxed_final
+                        color_relaxed = True
                 reranked = [
                     WbSimilarItemRD(
                         wb_item_id=item.wb_item_id,
@@ -1117,6 +1153,10 @@ async def wb_find_cheaper_cb(
         ),
         "",
     ]
+
+    if mode == "similar" and color_relaxed:
+        lines.append("ℹ️ Для расширения выдачи ослабил фильтр по цвету (остальные проверки сохранены).")
+        lines.append("")
 
     try:
         current_price_decimal = Decimal(current_price_text)
