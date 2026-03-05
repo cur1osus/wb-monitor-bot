@@ -996,6 +996,15 @@ async def wb_find_cheaper_cb(
         if not has_cheaper:
             lines.append("ℹ️ Дешевле не нашлось — показываю ближайшие похожие по цене.")
             lines.append("")
+
+    def _price_sort_key(item: WbSimilarItemRD) -> Decimal:
+        try:
+            return Decimal(str(item.price))
+        except (InvalidOperation, TypeError):
+            return Decimal("999999999")
+
+    alternatives = sorted(alternatives, key=_price_sort_key)
+
     for idx, item in enumerate(alternatives, start=1):
         lines.append(
             f'{idx}. <a href="{item.url}">{escape(item.title)}</a> — <b>{item.price} ₽</b>'
