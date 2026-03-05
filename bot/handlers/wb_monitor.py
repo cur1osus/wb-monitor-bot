@@ -122,6 +122,68 @@ _WB_ENABLE_SELENIUM_SIMILAR = (
     in {"1", "true", "yes", "on"}
 )
 
+_COLOR_ALIASES: dict[str, set[str]] = {
+    "black": {"черн", "black"},
+    "white": {"бел", "white"},
+    "gray": {"сер", "grey", "gray"},
+    "beige": {"беж", "beige"},
+    "brown": {"корич", "brown"},
+    "blue": {"син", "blue", "navy"},
+    "light_blue": {"голуб", "light blue"},
+    "green": {"зелен", "green", "khaki", "хаки"},
+    "red": {"красн", "red"},
+    "pink": {"розов", "pink"},
+    "purple": {"фиолет", "purple", "violet"},
+    "yellow": {"желт", "yellow"},
+    "orange": {"оранж", "orange"},
+}
+
+
+def _normalize_match_text(text: str) -> str:
+    return " ".join((text or "").lower().replace("ё", "е").split())
+
+
+def _extract_gender_marker(text: str) -> str | None:
+    t = _normalize_match_text(text)
+    if any(x in t for x in ("муж", "для мужчин", "male", "men", "man")):
+        return "male"
+    if any(x in t for x in ("жен", "для женщин", "female", "women", "woman")):
+        return "female"
+    if any(x in t for x in ("дет", "девоч", "мальч", "kids", "child")):
+        return "kids"
+    return None
+
+
+def _extract_color_groups(text: str) -> set[str]:
+    t = _normalize_match_text(text)
+    out: set[str] = set()
+    for group, aliases in _COLOR_ALIASES.items():
+        if any(alias in t for alias in aliases):
+            out.add(group)
+    return out
+
+
+def _filter_candidates_by_color_gender(
+    *,
+    base_title: str,
+    candidates: list[WbSimilarProduct],
+) -> list[WbSimilarProduct]:
+    base_gender = _extract_gender_marker(base_title)
+    base_colors = _extract_color_groups(base_title)
+    out: list[WbSimilarProduct] = []
+
+    for item in candidates:
+        item_gender = _extract_gender_marker(item.title)
+        item_colors = _extract_color_groups(item.title)
+
+        if base_gender and item_gender and base_gender != item_gender:
+            continue
+        if base_colors and item_colors and base_colors.isdisjoint(item_colors):
+            continue
+        out.append(item)
+
+    return out
+
 
 async def _live_filter_cheaper_in_stock(
     redis: "Redis",
@@ -893,13 +955,18 @@ async def wb_find_cheaper_cb(
                         limit=20,
                     )
                     if live_confirmed:
+                        color_gender_filtered = _filter_candidates_by_color_gender(
+                            base_title=current.title or track.title,
+                            candidates=live_confirmed,
+                        )
+                        llm_input = color_gender_filtered or live_confirmed
                         llm_ranked = await rerank_similar_with_llm(
                             api_key=se.agentplatform_api_key,
                             model=se.agentplatform_model,
                             api_base_url=se.agentplatform_base_url,
                             base_title=current.title or track.title,
                             base_price=str(current.price),
-                            candidates=live_confirmed,
+                            candidates=llm_input,
                             limit=10,
                         )
                         reranked = [
@@ -935,6 +1002,10 @@ async def wb_find_cheaper_cb(
                     live_input,
                     current_price=current.price,
                     limit=10,
+                )
+                live_confirmed = _filter_candidates_by_color_gender(
+                    base_title=current.title or track.title,
+                    candidates=live_confirmed,
                 )
                 reranked = [
                     WbSimilarItemRD(
