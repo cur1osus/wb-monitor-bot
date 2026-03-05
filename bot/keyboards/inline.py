@@ -111,7 +111,7 @@ def paged_track_kb(
 
     nav: list[InlineKeyboardButton] = [
         _btn("⬅️", f"wbm:page:{prev_page}"),
-        _btn(f"{page + 1} / {total}", "wbm:noop:0"),
+        _btn(f"{page + 1} / {total}", f"wbm:pagepick:{track.id}:{page}"),
         _btn("➡️", f"wbm:page:{next_page}"),
     ]
 

@@ -718,6 +718,106 @@ async def wb_list_cb(cb: CallbackQuery, session: AsyncSession, redis: "Redis") -
     )
 
 
+def _page_picker_kb(*, total: int, track_id: int, current_page: int) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    per_row = 5
+    page_buttons: list[InlineKeyboardButton] = []
+    for i in range(total):
+        label = f"[{i + 1}]" if i == current_page else str(i + 1)
+        page_buttons.append(InlineKeyboardButton(text=label, callback_data=f"wbm:page:{i}"))
+        if len(page_buttons) >= per_row:
+            rows.append(page_buttons)
+            page_buttons = []
+    if page_buttons:
+        rows.append(page_buttons)
+
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=tx.BTN_BACK,
+                callback_data=f"wbm:pagepickcancel:{track_id}:{current_page}",
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.callback_query(F.data.regexp(r"wbm:pagepick:(\d+):(\d+)"))
+async def wb_page_pick_cb(cb: CallbackQuery, session: AsyncSession) -> None:
+    parts = cb.data.split(":")
+    track_id = int(parts[2])
+    current_page = int(parts[3])
+
+    user = await get_or_create_monitor_user(
+        session, cb.from_user.id, cb.from_user.username
+    )
+    tracks = await get_user_tracks(session, user.id)
+    if not tracks:
+        await cb.answer(tx.NO_ACTIVE_TRACKS, show_alert=True)
+        return
+
+    if current_page < 0 or current_page >= len(tracks):
+        current_page = 0
+
+    # Ensure callback refers to an actual user track to avoid cross-user jumps.
+    if all(t.id != track_id for t in tracks):
+        track_id = tracks[current_page].id
+
+    await cb.answer()
+    await cb.message.edit_reply_markup(
+        reply_markup=_page_picker_kb(
+            total=len(tracks),
+            track_id=track_id,
+            current_page=current_page,
+        )
+    )
+
+
+@router.callback_query(F.data.regexp(r"wbm:pagepickcancel:(\d+):(\d+)"))
+async def wb_page_pick_cancel_cb(
+    cb: CallbackQuery,
+    session: AsyncSession,
+    redis: "Redis",
+) -> None:
+    parts = cb.data.split(":")
+    track_id = int(parts[2])
+    current_page = int(parts[3])
+
+    user = await get_or_create_monitor_user(
+        session, cb.from_user.id, cb.from_user.username
+    )
+    tracks = await get_user_tracks(session, user.id)
+    if not tracks:
+        await cb.answer(tx.NO_ACTIVE_TRACKS, show_alert=True)
+        return
+
+    page = current_page
+    if page < 0 or page >= len(tracks):
+        page = 0
+
+    track = tracks[page]
+    if track.id != track_id:
+        for idx, t in enumerate(tracks):
+            if t.id == track_id:
+                track = t
+                page = idx
+                break
+
+    await cb.answer()
+    await cb.message.edit_text(
+        format_track_text(track),
+        reply_markup=await _track_kb_with_usage(
+            session=session,
+            redis=redis,
+            user_tg_id=cb.from_user.id,
+            user_plan=user.plan,
+            track=track,
+            page=page,
+            total=len(tracks),
+        ),
+    )
+
+
 @router.callback_query(F.data.regexp(r"wbm:page:(\d+)"))
 async def wb_page_cb(cb: CallbackQuery, session: AsyncSession, redis: "Redis") -> None:
     page = int(cb.data.split(":")[2])
