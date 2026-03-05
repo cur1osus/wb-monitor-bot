@@ -718,11 +718,23 @@ async def wb_list_cb(cb: CallbackQuery, session: AsyncSession, redis: "Redis") -
     )
 
 
-def _page_picker_kb(*, total: int, track_id: int, current_page: int) -> InlineKeyboardMarkup:
+def _page_picker_kb(
+    *,
+    total: int,
+    track_id: int,
+    current_page: int,
+    offset: int = 0,
+) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     per_row = 5
+    max_buttons = 25
+
+    safe_total = max(1, total)
+    safe_offset = max(0, min(offset, max(0, safe_total - 1)))
+    end = min(safe_total, safe_offset + max_buttons)
+
     page_buttons: list[InlineKeyboardButton] = []
-    for i in range(total):
+    for i in range(safe_offset, end):
         label = f"[{i + 1}]" if i == current_page else str(i + 1)
         page_buttons.append(InlineKeyboardButton(text=label, callback_data=f"wbm:page:{i}"))
         if len(page_buttons) >= per_row:
@@ -730,6 +742,30 @@ def _page_picker_kb(*, total: int, track_id: int, current_page: int) -> InlineKe
             page_buttons = []
     if page_buttons:
         rows.append(page_buttons)
+
+    nav_row: list[InlineKeyboardButton] = []
+    if safe_offset > 0:
+        prev_offset = max(0, safe_offset - max_buttons)
+        nav_row.append(
+            InlineKeyboardButton(
+                text="⬅️",
+                callback_data=f"wbm:pagepick:{track_id}:{current_page}:{prev_offset}",
+            )
+        )
+    nav_row.append(
+        InlineKeyboardButton(
+            text=f"{safe_offset + 1}-{end} / {safe_total}",
+            callback_data="wbm:noop:0",
+        )
+    )
+    if end < safe_total:
+        nav_row.append(
+            InlineKeyboardButton(
+                text="➡️",
+                callback_data=f"wbm:pagepick:{track_id}:{current_page}:{end}",
+            )
+        )
+    rows.append(nav_row)
 
     rows.append(
         [
@@ -742,11 +778,12 @@ def _page_picker_kb(*, total: int, track_id: int, current_page: int) -> InlineKe
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-@router.callback_query(F.data.regexp(r"wbm:pagepick:(\d+):(\d+)"))
+@router.callback_query(F.data.regexp(r"wbm:pagepick:(\d+):(\d+)(?::(\d+))?"))
 async def wb_page_pick_cb(cb: CallbackQuery, session: AsyncSession) -> None:
     parts = cb.data.split(":")
     track_id = int(parts[2])
     current_page = int(parts[3])
+    offset = int(parts[4]) if len(parts) > 4 else 0
 
     user = await get_or_create_monitor_user(
         session, cb.from_user.id, cb.from_user.username
@@ -769,6 +806,7 @@ async def wb_page_pick_cb(cb: CallbackQuery, session: AsyncSession) -> None:
             total=len(tracks),
             track_id=track_id,
             current_page=current_page,
+            offset=offset,
         )
     )
 
