@@ -443,9 +443,19 @@ def review_insights_text(track_title: str, insights: "ReviewInsights") -> str:
             neg_used=neg_used,
             neg_total=neg_total,
         ),
+    ]
+
+    if pos_total == 0 and neg_total == 0:
+        lines.append("⚠️ Оценка может быть слабой: нет развернутых положительных и отрицательных отзывов.")
+    elif pos_total == 0:
+        lines.append("⚠️ Оценка может быть слабой: нет развернутых положительных отзывов.")
+    elif neg_total == 0:
+        lines.append("⚠️ Оценка может быть слабой: нет развернутых отрицательных отзывов.")
+
+    lines.extend([
         "",
         "✅ <b>Сильные качества:</b>",
-    ]
+    ])
 
     if insights.strengths:
         max_strengths = min(5, max(1, pos_total))
