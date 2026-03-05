@@ -743,29 +743,30 @@ def _page_picker_kb(
     if page_buttons:
         rows.append(page_buttons)
 
-    nav_row: list[InlineKeyboardButton] = []
-    if safe_offset > 0:
-        prev_offset = max(0, safe_offset - max_buttons)
+    if safe_total > max_buttons:
+        nav_row: list[InlineKeyboardButton] = []
+        if safe_offset > 0:
+            prev_offset = max(0, safe_offset - max_buttons)
+            nav_row.append(
+                InlineKeyboardButton(
+                    text="⬅️",
+                    callback_data=f"wbm:pagepick:{track_id}:{current_page}:{prev_offset}",
+                )
+            )
         nav_row.append(
             InlineKeyboardButton(
-                text="⬅️",
-                callback_data=f"wbm:pagepick:{track_id}:{current_page}:{prev_offset}",
+                text=f"{safe_offset + 1}-{end} / {safe_total}",
+                callback_data="wbm:noop:0",
             )
         )
-    nav_row.append(
-        InlineKeyboardButton(
-            text=f"{safe_offset + 1}-{end} / {safe_total}",
-            callback_data="wbm:noop:0",
-        )
-    )
-    if end < safe_total:
-        nav_row.append(
-            InlineKeyboardButton(
-                text="➡️",
-                callback_data=f"wbm:pagepick:{track_id}:{current_page}:{end}",
+        if end < safe_total:
+            nav_row.append(
+                InlineKeyboardButton(
+                    text="➡️",
+                    callback_data=f"wbm:pagepick:{track_id}:{current_page}:{end}",
+                )
             )
-        )
-    rows.append(nav_row)
+        rows.append(nav_row)
 
     rows.append(
         [
