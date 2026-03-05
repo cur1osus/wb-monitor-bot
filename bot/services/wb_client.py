@@ -268,6 +268,42 @@ def _extract_reviews(product: dict[str, object]) -> int | None:
     return None
 
 
+def _is_in_stock_product(product: dict[str, object]) -> bool:
+    # Fast flags seen in WB payloads
+    sold_out = product.get("isSoldOut")
+    if isinstance(sold_out, bool) and sold_out:
+        return False
+
+    for key in ("totalQuantity", "totalQty", "quantity", "qty"):
+        q = _parse_int(product.get(key))
+        if q is not None:
+            return q > 0
+
+    sizes_data = product.get("sizes")
+    if isinstance(sizes_data, list):
+        total = 0
+        found_stock_field = False
+        for s in sizes_data:
+            if not isinstance(s, dict):
+                continue
+            stocks = s.get("stocks")
+            if not isinstance(stocks, list):
+                continue
+            for stock in stocks:
+                if not isinstance(stock, dict):
+                    continue
+                q = _parse_int(stock.get("qty"))
+                if q is None:
+                    continue
+                found_stock_field = True
+                total += max(0, q)
+        if found_stock_field:
+            return total > 0
+
+    # If stock info is absent, keep item (don't over-filter unknowns).
+    return True
+
+
 def _normalize_match_percent(value: int | None) -> int:
     if value is None:
         return _MIN_CHARACTERISTICS_MATCH_PERCENT
@@ -775,6 +811,9 @@ async def search_similar_cheaper_title_only(
 
                     nm_id = _parse_int(product.get("id") or product.get("nmId"))
                     if nm_id is None or nm_id == exclude_wb_item_id or nm_id in seen_ids:
+                        continue
+
+                    if not _is_in_stock_product(product):
                         continue
 
                     price = _extract_price(product)
