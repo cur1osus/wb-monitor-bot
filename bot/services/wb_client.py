@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import re
 import time
@@ -22,10 +23,13 @@ from bot.db.redis import WbItemCacheRD
 if TYPE_CHECKING:
     from redis.asyncio import Redis
 
+logger = logging.getLogger(__name__)
+
 WB_RE = re.compile(r"(\d{6,15})")
 WB_CATALOG_RE = re.compile(r"/catalog/(\d{6,15})", re.IGNORECASE)
 _CYRILLIC_RE = re.compile(r"[а-яё]")
 SEARCH_WB_URLS = (
+    "https://search.wb.ru/exactmatch/ru/common/v14/search?ab_testing=false&appType=1&curr=rub&dest=-1257786&lang=ru&page={page}&query={query}&resultset=catalog&sort=popular&spp=30&suppressSpellcheck=false",
     "https://search.wb.ru/exactmatch/ru/common/v13/search?ab_testing=false&appType=1&curr=rub&dest=-1257786&lang=ru&page={page}&query={query}&resultset=catalog&sort=popular&spp=30&suppressSpellcheck=false",
     "https://search.wb.ru/exactmatch/ru/common/v9/search?ab_testing=false&appType=1&curr=rub&dest=-1257786&lang=ru&page={page}&query={query}&resultset=catalog&sort=popular&spp=30&suppressSpellcheck=false",
 )
@@ -405,12 +409,39 @@ def _exclude_reference_tokens(tokens: set[str], reference_text: str | None) -> s
     }
 
 
+def _extract_products_from_search_payload(data: object) -> list[dict[str, object]]:
+    if not isinstance(data, dict):
+        return []
+
+    # Common layout
+    products = data.get("products")
+    if isinstance(products, list):
+        return [p for p in products if isinstance(p, dict)]
+
+    # Nested layouts seen in some WB versions
+    for key in ("data", "result", "response"):
+        nested = data.get(key)
+        if isinstance(nested, dict):
+            nested_products = nested.get("products")
+            if isinstance(nested_products, list):
+                return [p for p in nested_products if isinstance(p, dict)]
+
+    # Fallback: scan one level for list[dict] named like catalog payload
+    for value in data.values():
+        if isinstance(value, dict):
+            nested_products = value.get("products")
+            if isinstance(nested_products, list):
+                return [p for p in nested_products if isinstance(p, dict)]
+
+    return []
+
+
 async def _get_json_with_retries(
     session: ClientSession,
     url: str,
     *,
     timeout: int = 20,
-    retries: int = 2,
+    retries: int = 4,
 ) -> object | None:
     for attempt in range(retries + 1):
         try:
@@ -419,14 +450,18 @@ async def _get_json_with_retries(
                     data = await resp.json(content_type=None)
                     if isinstance(data, (dict, list)):
                         return data
+                    logger.debug("WB non-json-dict payload: %s", url)
                     return None
+
+                logger.debug("WB search status=%s attempt=%s url=%s", resp.status, attempt + 1, url)
                 if resp.status == 429 and attempt < retries:
-                    await asyncio.sleep(0.35 * (attempt + 1))
+                    await asyncio.sleep(0.6 * (attempt + 1))
                     continue
                 return None
-        except Exception:
+        except Exception as e:
+            logger.debug("WB request error attempt=%s url=%s err=%s", attempt + 1, url, type(e).__name__)
             if attempt < retries:
-                await asyncio.sleep(0.35 * (attempt + 1))
+                await asyncio.sleep(0.6 * (attempt + 1))
                 continue
             return None
     return None
@@ -726,15 +761,13 @@ async def search_similar_cheaper_title_only(
                 if not isinstance(data, dict):
                     continue
 
-                products_raw = data.get("products")
-                if isinstance(products_raw, list):
-                    products = products_raw
-                else:
-                    nested = data.get("data")
-                    nested_products = (
-                        nested.get("products") if isinstance(nested, dict) else None
-                    )
-                    products = nested_products if isinstance(nested_products, list) else []
+                products = _extract_products_from_search_payload(data)
+                logger.debug(
+                    "WB cheaper-search query=%r page=%s products=%s",
+                    query_text,
+                    page,
+                    len(products),
+                )
 
                 for product in products:
                     if not isinstance(product, dict):
@@ -965,15 +998,7 @@ async def _search_similar_with_search(
             if not isinstance(data, dict):
                 continue
 
-            products_raw = data.get("products")
-            if isinstance(products_raw, list):
-                products = products_raw
-            else:
-                nested = data.get("data")
-                nested_products = (
-                    nested.get("products") if isinstance(nested, dict) else None
-                )
-                products = nested_products if isinstance(nested_products, list) else []
+            products = _extract_products_from_search_payload(data)
 
             for product in products:
                 if not isinstance(product, dict):
