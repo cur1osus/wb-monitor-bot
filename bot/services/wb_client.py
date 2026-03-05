@@ -698,19 +698,22 @@ async def search_similar_cheaper_title_only(
     limit: int = 5,
     session: ClientSession | None = None,
 ) -> list[WbSimilarProduct]:
-    # Intentionally title-only search:
-    # - query uses the original title as-is (no tokenization/normalization)
+    # Title-only mode with lightweight tokenization:
+    # - query uses tokenized title only
     # - no brand/entity/model/category/gender filtering
     # - only technical filters: exclude same item, require cheaper price
     if not base_title.strip() or limit <= 0:
         return []
 
     # Keep parameter for backward compatibility with call sites/config,
-    # but it is intentionally unused in title-only mode.
+    # but it is intentionally unused in this mode.
     _ = match_percent_threshold
 
+    tokens = _tokenize(base_title)
+    query_text = " ".join(tokens[:8]) if tokens else base_title
+
     async def run(s: ClientSession) -> list[WbSimilarProduct]:
-        query = quote_plus(base_title)
+        query = quote_plus(query_text)
         collected: list[WbSimilarProduct] = []
         seen_ids: set[int] = set()
 
