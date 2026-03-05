@@ -105,12 +105,15 @@ def paged_track_kb(
         # success — зелёный «Возобновить»
         action_btn = _btn(tx.BTN_RESUME, f"wbm:resume:{track.id}", style="success")
 
-    nav: list[InlineKeyboardButton] = []
-    if page > 0:
-        nav.append(_btn("⬅️", f"wbm:page:{page - 1}"))
-    nav.append(_btn(f"{page + 1} / {total}", "wbm:noop:0"))
-    if page < total - 1:
-        nav.append(_btn("➡️", f"wbm:page:{page + 1}"))
+    safe_total = max(1, total)
+    prev_page = (page - 1) % safe_total
+    next_page = (page + 1) % safe_total
+
+    nav: list[InlineKeyboardButton] = [
+        _btn("⬅️", f"wbm:page:{prev_page}"),
+        _btn(f"{page + 1} / {total}", "wbm:noop:0"),
+        _btn("➡️", f"wbm:page:{next_page}"),
+    ]
 
     if confirm_remove:
         top_rows = [
