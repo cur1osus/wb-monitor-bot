@@ -348,10 +348,12 @@ async def _request_llm(
         strengths = _normalize_qualities(
             parsed,
             keys=("strengths", "good", "positive"),
+            max_items=5,
         )
         weaknesses = _normalize_qualities(
             parsed,
             keys=("weaknesses", "bad", "negative"),
+            max_items=3,
         )
 
         if strengths or weaknesses:
@@ -540,6 +542,7 @@ def _normalize_qualities(
     parsed: dict[str, object],
     *,
     keys: tuple[str, ...],
+    max_items: int = 3,
 ) -> list[str]:
     raw: object = []
     for key in keys:
@@ -564,6 +567,6 @@ def _normalize_qualities(
             continue
         seen.add(normalized)
         out.append(text)
-        if len(out) >= 3:
+        if len(out) >= max(1, int(max_items)):
             break
     return out

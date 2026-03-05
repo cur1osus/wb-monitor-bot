@@ -388,7 +388,7 @@ REVIEW_ANALYSIS_RATE_LIMIT_SOON = (
     "Сейчас высокая нагрузка на сервис анализа. Подождите немного и попробуйте снова."
 )
 REVIEW_ANALYSIS_TASK_PROMPT = (
-    "Выдели 3 сильных качества и 3 слабых качества товара на основе отзывов. "
+    "Выдели 5 сильных качеств и до 3 слабых качеств товара на основе отзывов. "
     "Если данных для слабых качеств недостаточно, верни меньше пунктов или пустой список."
 )
 REVIEW_ANALYSIS_PROS_PREFIX = "Плюсы"
@@ -400,7 +400,7 @@ REVIEW_ANALYSIS_SYSTEM_PROMPT = (
     "На основе отзывов выдели ключевые сильные и слабые качества товара. "
     "Верни только JSON без пояснений в формате: "
     '{"strengths": ["..."], "weaknesses": ["..."]}. '
-    "Ограничение: максимум 3 пункта в каждом списке."
+    "Ограничение: strengths максимум 5, weaknesses максимум 3."
 )
 REVIEW_ANALYSIS_USER_PROMPT_PREFIX = (
     "Проанализируй отзывы и верни итог. Данные для анализа:\n"
@@ -448,7 +448,7 @@ def review_insights_text(track_title: str, insights: "ReviewInsights") -> str:
     ]
 
     if insights.strengths:
-        for idx, item in enumerate(insights.strengths, start=1):
+        for idx, item in enumerate(insights.strengths[:5], start=1):
             lines.append(f"{idx}. {escape(item)}")
     else:
         lines.append("1. Не удалось выделить по доступным отзывам.")
@@ -457,7 +457,8 @@ def review_insights_text(track_title: str, insights: "ReviewInsights") -> str:
     lines.append("⚠️ <b>Слабые качества:</b>")
 
     if insights.weaknesses:
-        for idx, item in enumerate(insights.weaknesses, start=1):
+        max_weaknesses = 3 if neg_total > 5 else 2
+        for idx, item in enumerate(insights.weaknesses[:max_weaknesses], start=1):
             lines.append(f"{idx}. {escape(item)}")
     else:
         lines.append("Нет явных повторяющихся минусов в развернутых отзывах.")
