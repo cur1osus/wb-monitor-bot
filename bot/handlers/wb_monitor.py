@@ -640,7 +640,7 @@ async def wb_add_item_from_text(
         tx.TRACK_ADDED_IN_STOCK_YES if product.in_stock else tx.TRACK_ADDED_IN_STOCK_NO
     )
 
-    text = tx.TRACK_ADDED_TEMPLATE.format(
+    text = tx.QUICK_ITEM_PREVIEW_TEMPLATE.format(
         title=product.title,
         price=price_text,
         rating=rating_text,

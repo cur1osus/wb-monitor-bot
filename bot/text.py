@@ -102,6 +102,12 @@ TRACK_ADDED_TEMPLATE = (
     "⭐ Рейтинг: {rating}\n"
     "📦 В наличии: {in_stock}"
 )
+QUICK_ITEM_PREVIEW_TEMPLATE = (
+    "📦 {title}\n"
+    "💰 Цена: {price}\n"
+    "⭐ Рейтинг: {rating}\n"
+    "📦 В наличии: {in_stock}"
+)
 TRACK_ADDED_RATING_WITH_REVIEWS = "{rating} ({reviews} отзывов)"
 TRACK_ADDED_PRICE_UNKNOWN = "не указана"
 TRACK_ADDED_RATING_UNKNOWN = "не указан"
