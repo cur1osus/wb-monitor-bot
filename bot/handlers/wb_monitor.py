@@ -593,6 +593,45 @@ def _quick_item_kb(wb_item_id: int, *, already_tracked: bool = False) -> InlineK
     )
 
 
+def _quick_preview_text(*, product: object, already_tracked: bool) -> str:
+    price = getattr(product, "price", None)
+    rating = getattr(product, "rating", None)
+    reviews = getattr(product, "reviews", None)
+    in_stock = bool(getattr(product, "in_stock", False))
+    title = str(getattr(product, "title", "Товар"))
+
+    price_text = f"{price}₽" if price else tx.TRACK_ADDED_PRICE_UNKNOWN
+    rating_text = (
+        tx.TRACK_ADDED_RATING_WITH_REVIEWS.format(
+            rating=rating,
+            reviews=reviews or 0,
+        )
+        if rating is not None
+        else tx.TRACK_ADDED_RATING_UNKNOWN
+    )
+    in_stock_text = tx.TRACK_ADDED_IN_STOCK_YES if in_stock else tx.TRACK_ADDED_IN_STOCK_NO
+
+    text = tx.QUICK_ITEM_PREVIEW_TEMPLATE.format(
+        title=title,
+        price=price_text,
+        rating=rating_text,
+        in_stock=in_stock_text,
+    )
+    if already_tracked:
+        text = f"{text}\n\n{tx.QUICK_ALREADY_TRACKED}"
+    return text
+
+
+def _quick_search_mode_kb(wb_item_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=tx.SEARCH_MODE_CHEAPER_BTN, callback_data=f"wbm:quick:searchmode:cheap:{wb_item_id}")],
+            [InlineKeyboardButton(text=tx.SEARCH_MODE_SIMILAR_BTN, callback_data=f"wbm:quick:searchmode:similar:{wb_item_id}")],
+            [InlineKeyboardButton(text=tx.BTN_BACK, callback_data=f"wbm:quick:preview:{wb_item_id}")],
+        ]
+    )
+
+
 @router.message(
     StateFilter(None),
     F.text,
@@ -627,30 +666,39 @@ async def wb_add_item_from_text(
         await msg.answer(tx.PRODUCT_FETCH_ERROR)
         return
 
-    price_text = f"{product.price}₽" if product.price else tx.TRACK_ADDED_PRICE_UNKNOWN
-    rating_text = (
-        tx.TRACK_ADDED_RATING_WITH_REVIEWS.format(
-            rating=product.rating,
-            reviews=product.reviews or 0,
-        )
-        if product.rating is not None
-        else tx.TRACK_ADDED_RATING_UNKNOWN
-    )
-    in_stock_text = (
-        tx.TRACK_ADDED_IN_STOCK_YES if product.in_stock else tx.TRACK_ADDED_IN_STOCK_NO
-    )
-
-    text = tx.QUICK_ITEM_PREVIEW_TEMPLATE.format(
-        title=product.title,
-        price=price_text,
-        rating=rating_text,
-        in_stock=in_stock_text,
-    )
-    if existing:
-        text = f"{text}\n\n{tx.QUICK_ALREADY_TRACKED}"
+    text = _quick_preview_text(product=product, already_tracked=bool(existing))
 
     await msg.answer(
         text,
+        reply_markup=_quick_item_kb(wb_item_id, already_tracked=bool(existing)),
+    )
+
+
+@router.callback_query(F.data.regexp(r"wbm:quick:preview:(\d+)"))
+async def wb_quick_preview_cb(
+    cb: CallbackQuery,
+    session: AsyncSession,
+    redis: "Redis",
+) -> None:
+    wb_item_id = int(cb.data.split(":")[3])
+    user = await get_or_create_monitor_user(
+        session, cb.from_user.id, cb.from_user.username, redis=redis
+    )
+    existing = await session.scalar(
+        select(TrackModel).where(
+            TrackModel.user_id == user.id,
+            TrackModel.wb_item_id == wb_item_id,
+            TrackModel.is_deleted.is_(False),
+        )
+    )
+    product = await fetch_product(redis, wb_item_id, use_cache=False)
+    if not product:
+        await cb.answer(tx.PRODUCT_FETCH_ERROR, show_alert=True)
+        return
+
+    await cb.answer()
+    await cb.message.edit_text(
+        _quick_preview_text(product=product, already_tracked=bool(existing)),
         reply_markup=_quick_item_kb(wb_item_id, already_tracked=bool(existing)),
     )
 
@@ -708,7 +756,10 @@ async def wb_quick_add_cb(
     await session.commit()
 
     await cb.answer("✅ Добавил в товары")
-    await cb.message.edit_reply_markup(reply_markup=_quick_item_kb(wb_item_id, already_tracked=True))
+    await cb.message.edit_text(
+        _quick_preview_text(product=product, already_tracked=True),
+        reply_markup=_quick_item_kb(wb_item_id, already_tracked=True),
+    )
 
 
 @router.callback_query(F.data.regexp(r"wbm:quick:reviews:(\d+)"))
@@ -745,7 +796,7 @@ async def wb_quick_reviews_cb(
         _format_review_insights_text(product.title, insights),
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text=tx.BTN_BACK, callback_data=f"wbm:quick:search:{wb_item_id}")],
+                [InlineKeyboardButton(text=tx.BTN_BACK, callback_data=f"wbm:quick:preview:{wb_item_id}")],
             ]
         ),
         link_preview_options=LinkPreviewOptions(is_disabled=True),
@@ -756,17 +807,18 @@ async def wb_quick_reviews_cb(
 async def wb_quick_search_cb(
     cb: CallbackQuery,
     session: AsyncSession,
+    redis: "Redis",
 ) -> None:
     wb_item_id = int(cb.data.split(":")[3])
+    product = await fetch_product(redis, wb_item_id)
+    if not product:
+        await cb.answer(tx.PRODUCT_FETCH_ERROR, show_alert=True)
+        return
+
     await cb.answer()
-    await cb.message.edit_reply_markup(
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text=tx.SEARCH_MODE_CHEAPER_BTN, callback_data=f"wbm:quick:searchmode:cheap:{wb_item_id}")],
-                [InlineKeyboardButton(text=tx.SEARCH_MODE_SIMILAR_BTN, callback_data=f"wbm:quick:searchmode:similar:{wb_item_id}")],
-                [InlineKeyboardButton(text=tx.BTN_BACK, callback_data=f"wbm:noop:0")],
-            ]
-        )
+    await cb.message.edit_text(
+        tx.SEARCH_MODE_PROMPT,
+        reply_markup=_quick_search_mode_kb(wb_item_id),
     )
 
 
@@ -814,9 +866,15 @@ async def wb_quick_searchmode_cb(
         for item in live_confirmed[:10]
     ]
 
+    back_quick_kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=tx.BTN_BACK, callback_data=f"wbm:quick:search:{wb_item_id}")],
+        ]
+    )
+
     if not alternatives:
         text = tx.FIND_CHEAPER_EMPTY.format(title=escape(product.title), price=str(product.price)) if mode == "cheap" else tx.FIND_SIMILAR_EMPTY.format(title=escape(product.title))
-        await cb.message.edit_text(text)
+        await cb.message.edit_text(text, reply_markup=back_quick_kb)
         return
 
     alternatives = sorted(alternatives, key=lambda x: Decimal(str(x.price)))
@@ -826,7 +884,11 @@ async def wb_quick_searchmode_cb(
         lines.append(f'{idx}. <a href="{item.url}">{escape(item.title)}</a> — <b>{item.price} ₽</b>')
     lines.append("")
     lines.append(tx.FIND_CHEAPER_TIP)
-    await cb.message.edit_text("\n".join(lines), link_preview_options=LinkPreviewOptions(is_disabled=True))
+    await cb.message.edit_text(
+        "\n".join(lines),
+        reply_markup=back_quick_kb,
+        link_preview_options=LinkPreviewOptions(is_disabled=True),
+    )
 
 
 @router.callback_query(F.data == "wbm:list:0")
