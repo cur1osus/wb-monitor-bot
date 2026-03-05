@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
@@ -114,6 +115,10 @@ router = Router()
 logger = logging.getLogger(__name__)
 _LIKELY_WB_INPUT_RE = re.compile(r"wildberries|wb\.ru|\d{6,15}", re.IGNORECASE)
 _ADMIN_PROMO_PAGE_SIZE = 8
+_WB_ENABLE_SELENIUM_SIMILAR = (
+    os.getenv("WB_ENABLE_SELENIUM_SIMILAR", "0").strip().lower()
+    in {"1", "true", "yes", "on"}
+)
 
 
 def _model_signature(model: str, review_limit: int) -> str:
@@ -798,20 +803,23 @@ async def wb_find_cheaper_cb(
                 )
                 return
 
-            try:
-                selenium_items = await asyncio.to_thread(
-                    fetch_similar_products,
-                    track.wb_item_id,
-                    limit=40,
-                    timeout_sec=20.0,
-                    headless=True,
-                )
-            except Exception:
-                logger.exception(
-                    "Selenium similar parser failed (track_id=%s, wb_item_id=%s)",
-                    track.id,
-                    track.wb_item_id,
-                )
+            if _WB_ENABLE_SELENIUM_SIMILAR:
+                try:
+                    selenium_items = await asyncio.to_thread(
+                        fetch_similar_products,
+                        track.wb_item_id,
+                        limit=40,
+                        timeout_sec=20.0,
+                        headless=True,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Selenium similar parser failed (track_id=%s, wb_item_id=%s)",
+                        track.id,
+                        track.wb_item_id,
+                    )
+                    selenium_items = []
+            else:
                 selenium_items = []
 
             reranked: list[WbSimilarItemRD] = []
