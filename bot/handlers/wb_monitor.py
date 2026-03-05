@@ -585,15 +585,18 @@ async def wb_add_cb(cb: CallbackQuery) -> None:
 
 
 def _quick_item_kb(wb_item_id: int, *, already_tracked: bool = False) -> InlineKeyboardMarkup:
-    add_cb = "wbm:noop:0" if already_tracked else f"wbm:quick:add:{wb_item_id}"
-    add_text = f"✅ {tx.QUICK_ADD_BTN}" if already_tracked else tx.QUICK_ADD_BTN
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=add_text, callback_data=add_cb)],
-            [InlineKeyboardButton(text=tx.QUICK_REVIEWS_BTN, callback_data=f"wbm:quick:reviews:{wb_item_id}")],
-            [InlineKeyboardButton(text=tx.QUICK_SEARCH_BTN, callback_data=f"wbm:quick:search:{wb_item_id}")],
-        ]
+    rows: list[list[InlineKeyboardButton]] = []
+    if not already_tracked:
+        rows.append(
+            [InlineKeyboardButton(text=tx.QUICK_ADD_BTN, callback_data=f"wbm:quick:add:{wb_item_id}")]
+        )
+    rows.append(
+        [InlineKeyboardButton(text=tx.QUICK_REVIEWS_BTN, callback_data=f"wbm:quick:reviews:{wb_item_id}")]
     )
+    rows.append(
+        [InlineKeyboardButton(text=tx.QUICK_SEARCH_BTN, callback_data=f"wbm:quick:search:{wb_item_id}")]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _quick_preview_text(*, product: object, already_tracked: bool) -> str:
