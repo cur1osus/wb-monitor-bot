@@ -698,71 +698,74 @@ async def search_similar_cheaper_title_only(
     limit: int = 5,
     session: ClientSession | None = None,
 ) -> list[WbSimilarProduct]:
-    base_tokens = _characteristic_tokens(base_title)
-    if not base_tokens:
+    # Intentionally title-only search:
+    # - query uses the original title as-is (no tokenization/normalization)
+    # - no brand/entity/model/category/gender filtering
+    # - only technical filters: exclude same item, require cheaper price
+    if not base_title.strip() or limit <= 0:
         return []
 
-    min_match_percent = _normalize_match_percent(match_percent_threshold)
-    core_tokens = [token for token in _tokenize(base_title) if len(token) >= 4]
-    core_title = " ".join(core_tokens[:6])
+    # Keep parameter for backward compatibility with call sites/config,
+    # but it is intentionally unused in title-only mode.
+    _ = match_percent_threshold
 
     async def run(s: ClientSession) -> list[WbSimilarProduct]:
-        expanded_limit = max(limit * 3, 12)
-
-        full = await _search_similar_with_search(
-            s,
-            base_title=base_title,
-            base_gender=None,
-            base_tokens=base_tokens,
-            base_brand_tokens=set(),
-            base_anchor_tokens=set(),
-            base_type_tokens=set(),
-            base_model_tokens=set(),
-            required_anchor_matches=0,
-            require_model_tokens=False,
-            base_ecosystem=None,
-            base_subject_id=None,
-            min_match_percent=min_match_percent,
-            enforce_gender=False,
-            max_price=max_price,
-            exclude_wb_item_id=exclude_wb_item_id,
-            limit=expanded_limit,
-            skip_ids=set(),
-        )
-
-        compact: list[WbSimilarProduct] = []
-        if core_title and core_title != base_title:
-            compact = await _search_similar_with_search(
-                s,
-                base_title=core_title,
-                base_gender=None,
-                base_tokens=base_tokens,
-                base_brand_tokens=set(),
-                base_anchor_tokens=set(),
-                base_type_tokens=set(),
-                base_model_tokens=set(),
-                required_anchor_matches=0,
-                require_model_tokens=False,
-                base_ecosystem=None,
-                base_subject_id=None,
-                min_match_percent=max(10, min_match_percent - 10),
-                enforce_gender=False,
-                max_price=max_price,
-                exclude_wb_item_id=exclude_wb_item_id,
-                limit=expanded_limit,
-                skip_ids={item.wb_item_id for item in full},
-            )
-
-        merged: list[WbSimilarProduct] = []
+        query = quote_plus(base_title)
+        collected: list[WbSimilarProduct] = []
         seen_ids: set[int] = set()
-        for item in full + compact:
-            if item.wb_item_id in seen_ids:
-                continue
-            seen_ids.add(item.wb_item_id)
-            merged.append(item)
 
-        merged.sort(key=lambda p: p.price)
-        return merged[:limit]
+        expanded_limit = max(limit * 4, 20)
+
+        for template in SEARCH_WB_URLS:
+            for page in range(1, 4):
+                url = template.format(page=page, query=query)
+                data = await _get_json_with_retries(s, url)
+                if not isinstance(data, dict):
+                    continue
+
+                products_raw = data.get("products")
+                if isinstance(products_raw, list):
+                    products = products_raw
+                else:
+                    nested = data.get("data")
+                    nested_products = (
+                        nested.get("products") if isinstance(nested, dict) else None
+                    )
+                    products = nested_products if isinstance(nested_products, list) else []
+
+                for product in products:
+                    if not isinstance(product, dict):
+                        continue
+
+                    nm_id = _parse_int(product.get("id") or product.get("nmId"))
+                    if nm_id is None or nm_id == exclude_wb_item_id or nm_id in seen_ids:
+                        continue
+
+                    price = _extract_price(product)
+                    if price is None or price >= max_price:
+                        continue
+
+                    title = str(product.get("name") or product.get("imt_name") or f"WB #{nm_id}")
+                    collected.append(
+                        WbSimilarProduct(
+                            wb_item_id=nm_id,
+                            title=title,
+                            price=price,
+                            url=f"https://www.wildberries.ru/catalog/{nm_id}/detail.aspx",
+                        )
+                    )
+                    seen_ids.add(nm_id)
+
+                    if len(collected) >= expanded_limit:
+                        break
+
+                if len(collected) >= expanded_limit:
+                    break
+            if len(collected) >= expanded_limit:
+                break
+
+        collected.sort(key=lambda p: p.price)
+        return collected[:limit]
 
     if session is None:
         async with ClientSession(headers=WB_HTTP_HEADERS) as new_session:
