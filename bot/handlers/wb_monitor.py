@@ -165,6 +165,7 @@ async def _live_filter_cheaper_in_stock(
     current_price: Decimal,
     base_kind_id: int | None = None,
     base_colors: list[str] | None = None,
+    require_cheaper: bool = True,
     limit: int = 12,
 ) -> list[WbSimilarProduct]:
     out: list[WbSimilarProduct] = []
@@ -179,7 +180,7 @@ async def _live_filter_cheaper_in_stock(
             continue
         if not snap.in_stock:
             continue
-        if snap.price >= current_price:
+        if require_cheaper and snap.price >= current_price:
             continue
 
         # Card-level gender/segment proxy from WB kindId
@@ -821,10 +822,48 @@ async def wb_remove_yes_cb(cb: CallbackQuery, session: AsyncSession) -> None:
 
 
 @router.callback_query(F.data.regexp(r"wbm:cheap:(\d+)"))
+async def wb_search_mode_cb(cb: CallbackQuery, session: AsyncSession) -> None:
+    track_id = int(cb.data.split(":")[2])
+    track = await get_user_track_by_id(session, track_id)
+    if not track:
+        await cb.answer(tx.TRACK_NOT_FOUND, show_alert=True)
+        return
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=tx.SEARCH_MODE_CHEAPER_BTN,
+                    callback_data=f"wbm:cheapmode:cheap:{track.id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=tx.SEARCH_MODE_SIMILAR_BTN,
+                    callback_data=f"wbm:cheapmode:similar:{track.id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=tx.FIND_CHEAPER_TO_LIST_BTN,
+                    callback_data=f"wbm:back:{track.id}",
+                )
+            ],
+        ]
+    )
+    await cb.answer()
+    await cb.message.edit_text(
+        tx.SEARCH_MODE_PROMPT,
+        reply_markup=kb,
+    )
+
+
+@router.callback_query(F.data.regexp(r"wbm:cheapmode:(cheap|similar):(\d+)"))
 async def wb_find_cheaper_cb(
     cb: CallbackQuery, session: AsyncSession, redis: "Redis"
 ) -> None:
-    track_id = int(cb.data.split(":")[2])
+    mode = cb.data.split(":")[2]
+    track_id = int(cb.data.split(":")[3])
     track = await get_user_track_by_id(session, track_id)
     if not track:
         await cb.answer(tx.TRACK_NOT_FOUND, show_alert=True)
@@ -842,7 +881,8 @@ async def wb_find_cheaper_cb(
     )
 
     cfg = runtime_config_view(await get_runtime_config(session))
-    cached = await WbSimilarSearchCacheRD.get(redis, track.id)
+    use_cache = mode == "cheap"
+    cached = await WbSimilarSearchCacheRD.get(redis, track.id) if use_cache else None
     if cached is None or cached.match_percent != cfg.cheap_match_percent:
         user = await get_or_create_monitor_user(
             session,
@@ -863,16 +903,21 @@ async def wb_find_cheaper_cb(
             )
             return
 
+        event_name = "cheap_scan" if mode == "cheap" else "similar_scan"
         await log_event(
             session,
             track.id,
-            "cheap_scan",
-            f"cheap:{track.id}:{cb.from_user.id}:{datetime.now(UTC).timestamp()}",
+            event_name,
+            f"{mode}:{track.id}:{cb.from_user.id}:{datetime.now(UTC).timestamp()}",
         )
         await session.commit()
 
         await cb.answer(tx.FIND_CHEAPER_ANSWER)
-        progress_text = tx.FIND_CHEAPER_PROGRESS.format(title=escape(track.title))
+        progress_text = (
+            tx.FIND_CHEAPER_PROGRESS.format(title=escape(track.title))
+            if mode == "cheap"
+            else tx.FIND_SIMILAR_PROGRESS.format(title=escape(track.title))
+        )
         spinner_task = asyncio.create_task(
             _progress_spinner(cb.message, base_text=progress_text, reply_markup=back_kb)
         )
@@ -915,7 +960,7 @@ async def wb_find_cheaper_cb(
                 priced.sort(key=lambda item: item.final_price)
 
                 cheaper = [item for item in priced if item.final_price < current.price]
-                selected = cheaper[:10] if cheaper else priced[:10]
+                selected = (cheaper[:10] if cheaper else priced[:10]) if mode == "cheap" else priced[:10]
                 reranked = [
                     WbSimilarItemRD(
                         wb_item_id=item.nm_id,
@@ -930,7 +975,7 @@ async def wb_find_cheaper_cb(
                 found = await search_similar_cheaper_title_only(
                     base_title=current.title or track.title,
                     match_percent_threshold=cfg.cheap_match_percent,
-                    max_price=current.price,
+                    max_price=current.price if mode == "cheap" else Decimal("99999999"),
                     exclude_wb_item_id=track.wb_item_id,
                     limit=20,
                 )
@@ -941,6 +986,7 @@ async def wb_find_cheaper_cb(
                         current_price=current.price,
                         base_kind_id=current.kind_id,
                         base_colors=current.colors,
+                        require_cheaper=(mode == "cheap"),
                         limit=20,
                     )
                     if live_confirmed:
@@ -967,7 +1013,7 @@ async def wb_find_cheaper_cb(
                 reranked = await _search_wb_loose_alternatives(
                     base_title=current.title or track.title,
                     exclude_wb_item_id=track.wb_item_id,
-                    max_price=current.price,
+                    max_price=current.price if mode == "cheap" else None,
                     limit=8,
                 )
 
@@ -987,6 +1033,7 @@ async def wb_find_cheaper_cb(
                     current_price=current.price,
                     base_kind_id=current.kind_id,
                     base_colors=current.colors,
+                    require_cheaper=(mode == "cheap"),
                     limit=10,
                 )
                 reranked = [
@@ -1003,31 +1050,35 @@ async def wb_find_cheaper_cb(
 
         alternatives = reranked
         current_price_text = str(current.price)
-        await WbSimilarSearchCacheRD(
-            track_id=track.id,
-            base_price=current_price_text,
-            match_percent=cfg.cheap_match_percent,
-            items=alternatives,
-        ).save(redis)
+        if use_cache:
+            await WbSimilarSearchCacheRD(
+                track_id=track.id,
+                base_price=current_price_text,
+                match_percent=cfg.cheap_match_percent,
+                items=alternatives,
+            ).save(redis)
     else:
         await cb.answer()
         alternatives = cached.items
         current_price_text = cached.base_price
 
     if not alternatives:
+        empty_text = (
+            tx.FIND_CHEAPER_EMPTY.format(title=escape(track.title), price=current_price_text)
+            if mode == "cheap"
+            else tx.FIND_SIMILAR_EMPTY.format(title=escape(track.title))
+        )
         await cb.message.edit_text(
-            tx.FIND_CHEAPER_EMPTY.format(
-                title=escape(track.title),
-                price=current_price_text,
-            ),
+            empty_text,
             reply_markup=back_kb,
         )
         return
 
     lines = [
-        tx.FIND_CHEAPER_HEADER.format(
-            price=current_price_text,
-            title=escape(track.title),
+        (
+            tx.FIND_CHEAPER_HEADER.format(price=current_price_text, title=escape(track.title))
+            if mode == "cheap"
+            else tx.FIND_SIMILAR_HEADER.format(title=escape(track.title))
         ),
         "",
     ]
@@ -1037,7 +1088,7 @@ async def wb_find_cheaper_cb(
     except (InvalidOperation, TypeError):
         current_price_decimal = None
 
-    if current_price_decimal is not None:
+    if mode == "cheap" and current_price_decimal is not None:
         has_cheaper = False
         for item in alternatives:
             try:
