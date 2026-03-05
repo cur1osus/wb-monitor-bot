@@ -332,7 +332,15 @@ def _tokenize(text: str) -> list[str]:
             if parsed:
                 token = parsed[0].normal_form
         token = _TOKEN_NORMALIZATION.get(token, token)
-        if len(token) >= 3 and not token.isdigit() and token not in _STOP_WORDS:
+
+        if token.isdigit():
+            # Keep compact numeric model/version tokens (e.g. 13, 17, 256, 2024)
+            # so search/relevance does not lose critical distinctions.
+            if 1 <= len(token) <= 4:
+                out.append(token)
+            continue
+
+        if len(token) >= 3 and token not in _STOP_WORDS:
             out.append(token)
     return out
 

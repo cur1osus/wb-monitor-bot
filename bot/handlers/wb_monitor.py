@@ -158,6 +158,29 @@ def _color_groups_from_card(colors: list[str] | None) -> set[str]:
     return _extract_color_groups(" ".join(colors))
 
 
+def _extract_numeric_tokens(text: str) -> set[str]:
+    # Model/version/volume-like tokens (e.g. 17, 256, 2024)
+    return set(re.findall(r"\b\d{1,4}\b", text or ""))
+
+
+def _filter_candidates_by_numeric_tokens(
+    *,
+    base_title: str,
+    candidates: list[WbSimilarProduct],
+) -> list[WbSimilarProduct]:
+    base_nums = _extract_numeric_tokens(base_title)
+    if not base_nums:
+        return candidates
+
+    out: list[WbSimilarProduct] = []
+    for item in candidates:
+        cand_nums = _extract_numeric_tokens(item.title)
+        if cand_nums and base_nums.isdisjoint(cand_nums):
+            continue
+        out.append(item)
+    return out
+
+
 async def _live_filter_cheaper_in_stock(
     redis: "Redis",
     candidates: list[WbSimilarProduct],
@@ -1043,6 +1066,11 @@ async def wb_find_cheaper_cb(
                             live_confirmed = relaxed
                             color_relaxed = True
 
+                    live_confirmed = _filter_candidates_by_numeric_tokens(
+                        base_title=current.title or track.title,
+                        candidates=live_confirmed,
+                    )
+
                     if live_confirmed:
                         llm_ranked = await rerank_similar_with_llm(
                             api_key=se.agentplatform_api_key,
@@ -1107,6 +1135,10 @@ async def wb_find_cheaper_cb(
                     if len(relaxed_final) > len(live_confirmed):
                         live_confirmed = relaxed_final
                         color_relaxed = True
+                live_confirmed = _filter_candidates_by_numeric_tokens(
+                    base_title=current.title or track.title,
+                    candidates=live_confirmed,
+                )
                 reranked = [
                     WbSimilarItemRD(
                         wb_item_id=item.wb_item_id,
