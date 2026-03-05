@@ -33,6 +33,8 @@ from bot.db.redis import (
     FeatureUsageDailyRD,
     MonitorUserRD,
     QuickReviewInsightsCacheRD,
+    QuickSimilarItemRD,
+    QuickSimilarSearchCacheRD,
     WbReviewInsightsCacheRD,
     WbSimilarItemRD,
     WbSimilarSearchCacheRD,
@@ -873,63 +875,100 @@ async def wb_quick_searchmode_cb(
         await cb.answer(tx.PRODUCT_FETCH_ERROR, show_alert=True)
         return
 
-    await cb.answer()
-    progress_text = (
-        tx.FIND_CHEAPER_PROGRESS.format(title=escape(product.title))
-        if mode == "cheap"
-        else tx.FIND_SIMILAR_PROGRESS.format(title=escape(product.title))
-    )
-    await cb.message.edit_text(
-        progress_text,
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text=tx.BTN_BACK, callback_data=f"wbm:quick:search:{wb_item_id}")],
-            ]
-        ),
-    )
-
-    found = await search_similar_cheaper_title_only(
-        base_title=product.title,
-        match_percent_threshold=None,
-        max_price=product.price if mode == "cheap" else Decimal("99999999"),
-        exclude_wb_item_id=wb_item_id,
-        limit=20,
-    )
-    live_confirmed = await _live_filter_cheaper_in_stock(
-        redis,
-        found,
-        current_price=product.price,
-        base_kind_id=product.kind_id,
-        base_colors=product.colors,
-        enforce_color=True,
-        require_cheaper=(mode == "cheap"),
-        limit=10,
-    )
-    live_confirmed = _filter_candidates_by_numeric_tokens(base_title=product.title, candidates=live_confirmed)
-
-    alternatives = [
-        WbSimilarItemRD(
-            wb_item_id=item.wb_item_id,
-            title=item.title,
-            price=str(item.price),
-            url=item.url,
-        )
-        for item in live_confirmed[:10]
-    ]
-
     back_quick_kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text=tx.BTN_BACK, callback_data=f"wbm:quick:search:{wb_item_id}")],
         ]
     )
 
+    cached_search = await QuickSimilarSearchCacheRD.get(redis, wb_item_id=wb_item_id, mode=mode)
+    alternatives: list[WbSimilarItemRD] = []
+    current_price_text = str(product.price)
+    if cached_search is not None and (mode != "cheap" or cached_search.base_price == current_price_text):
+        alternatives = [
+            WbSimilarItemRD(
+                wb_item_id=item.wb_item_id,
+                title=item.title,
+                price=item.price,
+                url=item.url,
+            )
+            for item in cached_search.items
+        ]
+
+    await cb.answer()
     if not alternatives:
-        text = tx.FIND_CHEAPER_EMPTY.format(title=escape(product.title), price=str(product.price)) if mode == "cheap" else tx.FIND_SIMILAR_EMPTY.format(title=escape(product.title))
+        progress_text = (
+            tx.FIND_CHEAPER_PROGRESS.format(title=escape(product.title))
+            if mode == "cheap"
+            else tx.FIND_SIMILAR_PROGRESS.format(title=escape(product.title))
+        )
+        await cb.message.edit_text(
+            progress_text,
+            reply_markup=back_quick_kb,
+        )
+
+        found = await search_similar_cheaper_title_only(
+            base_title=product.title,
+            match_percent_threshold=None,
+            max_price=product.price if mode == "cheap" else Decimal("99999999"),
+            exclude_wb_item_id=wb_item_id,
+            limit=20,
+        )
+        live_confirmed = await _live_filter_cheaper_in_stock(
+            redis,
+            found,
+            current_price=product.price,
+            base_kind_id=product.kind_id,
+            base_colors=product.colors,
+            enforce_color=True,
+            require_cheaper=(mode == "cheap"),
+            limit=10,
+        )
+        live_confirmed = _filter_candidates_by_numeric_tokens(
+            base_title=product.title,
+            candidates=live_confirmed,
+        )
+
+        alternatives = [
+            WbSimilarItemRD(
+                wb_item_id=item.wb_item_id,
+                title=item.title,
+                price=str(item.price),
+                url=item.url,
+            )
+            for item in live_confirmed[:10]
+        ]
+
+        await QuickSimilarSearchCacheRD(
+            wb_item_id=wb_item_id,
+            mode=mode,
+            base_price=current_price_text,
+            items=[
+                QuickSimilarItemRD(
+                    wb_item_id=item.wb_item_id,
+                    title=item.title,
+                    price=item.price,
+                    url=item.url,
+                )
+                for item in alternatives
+            ],
+        ).save(redis)
+
+    if not alternatives:
+        text = (
+            tx.FIND_CHEAPER_EMPTY.format(title=escape(product.title), price=current_price_text)
+            if mode == "cheap"
+            else tx.FIND_SIMILAR_EMPTY.format(title=escape(product.title))
+        )
         await cb.message.edit_text(text, reply_markup=back_quick_kb)
         return
 
     alternatives = sorted(alternatives, key=lambda x: Decimal(str(x.price)))
-    header = tx.FIND_CHEAPER_HEADER.format(price=str(product.price), title=escape(product.title)) if mode == "cheap" else tx.FIND_SIMILAR_HEADER.format(title=escape(product.title))
+    header = (
+        tx.FIND_CHEAPER_HEADER.format(price=current_price_text, title=escape(product.title))
+        if mode == "cheap"
+        else tx.FIND_SIMILAR_HEADER.format(title=escape(product.title))
+    )
     lines = [header, ""]
     for idx, item in enumerate(alternatives, start=1):
         lines.append(f'{idx}. <a href="{item.url}">{escape(item.title)}</a> — <b>{item.price} ₽</b>')

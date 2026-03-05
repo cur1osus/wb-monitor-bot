@@ -267,6 +267,44 @@ class QuickReviewInsightsCacheRD(_RDBase):
         )
 
 
+# ─── QuickSimilarSearchCacheRD (30 min) ──────────────────────────────────────
+_QUICK_SIMILAR_SEARCH_TTL: Final[int] = int(timedelta(minutes=30).total_seconds())
+
+
+class QuickSimilarItemRD(msgspec.Struct, kw_only=True, array_like=True):
+    wb_item_id: int
+    title: str
+    price: str
+    url: str
+
+
+class QuickSimilarSearchCacheRD(_RDBase):
+    """Кэш quick-поиска (дешевле/похожие) по wb_item_id. TTL 30 минут."""
+
+    wb_item_id: int
+    mode: str
+    base_price: str
+    items: list[QuickSimilarItemRD] = []
+
+    @classmethod
+    async def get(
+        cls,
+        redis: Redis,
+        wb_item_id: int,
+        mode: str,
+    ) -> "QuickSimilarSearchCacheRD | None":
+        data = await cls._get_raw(redis, wb_item_id, mode)
+        return msgspec.msgpack.decode(data, type=cls) if data else None
+
+    async def save(self, redis: Redis) -> None:
+        await self._save_raw(
+            redis,
+            self.wb_item_id,
+            self.mode,
+            ttl=_QUICK_SIMILAR_SEARCH_TTL,
+        )
+
+
 # ─── FeatureUsageDailyRD ──────────────────────────────────────────────────────
 class FeatureUsageDailyRD:
     """Счетчик обращений к тяжелым фичам по дням (UTC)."""
