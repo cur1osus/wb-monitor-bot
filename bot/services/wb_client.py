@@ -185,6 +185,8 @@ class WbProductSnapshot:
     brand: str | None = None
     entity: str | None = None
     subject_id: int | None = None
+    kind_id: int | None = None
+    colors: list[str] | None = None
 
 
 @dataclass
@@ -606,6 +608,8 @@ async def fetch_product(
                 in_stock=bool(cached.in_stock),
                 total_qty=cached.total_qty,
                 sizes=list(cached.sizes),
+                kind_id=None,
+                colors=None,
             )
 
     url = f"https://card.wb.ru/cards/v4/detail?appType=1&curr=rub&dest=-1257786&nm={wb_item_id}"
@@ -1425,6 +1429,15 @@ async def _fetch_and_cache(
     rating = _extract_rating(p)
     reviews = _extract_reviews(p)
 
+    color_names: list[str] = []
+    raw_colors = p.get("colors")
+    if isinstance(raw_colors, list):
+        for c in raw_colors:
+            if isinstance(c, dict):
+                n = c.get("name")
+                if isinstance(n, str) and n.strip():
+                    color_names.append(n.strip())
+
     snap = WbProductSnapshot(
         wb_item_id=wb_item_id,
         title=title,
@@ -1437,6 +1450,8 @@ async def _fetch_and_cache(
         brand=str(p.get("brand")) if p.get("brand") else None,
         entity=str(p.get("entity")) if p.get("entity") else None,
         subject_id=_parse_int(p.get("subjectId")),
+        kind_id=_parse_int(p.get("kindId")),
+        colors=color_names,
     )
 
     await WbItemCacheRD(

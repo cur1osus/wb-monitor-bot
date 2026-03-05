@@ -143,17 +143,6 @@ def _normalize_match_text(text: str) -> str:
     return " ".join((text or "").lower().replace("ё", "е").split())
 
 
-def _extract_gender_marker(text: str) -> str | None:
-    t = _normalize_match_text(text)
-    if any(x in t for x in ("муж", "для мужчин", "male", "men", "man")):
-        return "male"
-    if any(x in t for x in ("жен", "для женщин", "female", "women", "woman")):
-        return "female"
-    if any(x in t for x in ("дет", "девоч", "мальч", "kids", "child")):
-        return "kids"
-    return None
-
-
 def _extract_color_groups(text: str) -> set[str]:
     t = _normalize_match_text(text)
     out: set[str] = set()
@@ -163,26 +152,10 @@ def _extract_color_groups(text: str) -> set[str]:
     return out
 
 
-def _filter_candidates_by_color_gender(
-    *,
-    base_title: str,
-    candidates: list[WbSimilarProduct],
-) -> list[WbSimilarProduct]:
-    base_gender = _extract_gender_marker(base_title)
-    base_colors = _extract_color_groups(base_title)
-    out: list[WbSimilarProduct] = []
-
-    for item in candidates:
-        item_gender = _extract_gender_marker(item.title)
-        item_colors = _extract_color_groups(item.title)
-
-        if base_gender and item_gender and base_gender != item_gender:
-            continue
-        if base_colors and item_colors and base_colors.isdisjoint(item_colors):
-            continue
-        out.append(item)
-
-    return out
+def _color_groups_from_card(colors: list[str] | None) -> set[str]:
+    if not colors:
+        return set()
+    return _extract_color_groups(" ".join(colors))
 
 
 async def _live_filter_cheaper_in_stock(
@@ -190,9 +163,13 @@ async def _live_filter_cheaper_in_stock(
     candidates: list[WbSimilarProduct],
     *,
     current_price: Decimal,
+    base_kind_id: int | None = None,
+    base_colors: list[str] | None = None,
     limit: int = 12,
 ) -> list[WbSimilarProduct]:
     out: list[WbSimilarProduct] = []
+    base_color_groups = _color_groups_from_card(base_colors)
+
     for item in candidates:
         try:
             snap = await fetch_product(redis, item.wb_item_id, use_cache=False)
@@ -204,6 +181,16 @@ async def _live_filter_cheaper_in_stock(
             continue
         if snap.price >= current_price:
             continue
+
+        # Card-level gender/segment proxy from WB kindId
+        if base_kind_id is not None and snap.kind_id is not None and snap.kind_id != base_kind_id:
+            continue
+
+        # Card-level color matching
+        item_color_groups = _color_groups_from_card(snap.colors)
+        if base_color_groups and item_color_groups and base_color_groups.isdisjoint(item_color_groups):
+            continue
+
         out.append(
             WbSimilarProduct(
                 wb_item_id=item.wb_item_id,
@@ -952,14 +939,11 @@ async def wb_find_cheaper_cb(
                         redis,
                         found,
                         current_price=current.price,
+                        base_kind_id=current.kind_id,
+                        base_colors=current.colors,
                         limit=20,
                     )
                     if live_confirmed:
-                        color_gender_filtered = _filter_candidates_by_color_gender(
-                            base_title=current.title or track.title,
-                            candidates=live_confirmed,
-                        )
-                        llm_input = color_gender_filtered or live_confirmed
                         llm_ranked = await rerank_similar_with_llm(
                             api_key=se.agentplatform_api_key,
                             model=se.agentplatform_model,
@@ -1001,11 +985,9 @@ async def wb_find_cheaper_cb(
                     redis,
                     live_input,
                     current_price=current.price,
+                    base_kind_id=current.kind_id,
+                    base_colors=current.colors,
                     limit=10,
-                )
-                live_confirmed = _filter_candidates_by_color_gender(
-                    base_title=current.title or track.title,
-                    candidates=live_confirmed,
                 )
                 reranked = [
                     WbSimilarItemRD(
