@@ -745,7 +745,7 @@ async def wb_quick_add_cb(
     cfg = runtime_config_view(await get_runtime_config(session))
     interval = cfg.pro_interval_min if user.plan == "pro" else cfg.free_interval_min
     track_url = f"https://www.wildberries.ru/catalog/{wb_item_id}/detail.aspx"
-    await create_track(
+    track = await create_track(
         session,
         user.id,
         wb_item_id,
@@ -761,10 +761,25 @@ async def wb_quick_add_cb(
     )
     await session.commit()
 
+    tracks = await get_user_tracks(session, user.id)
+    page = 0
+    for idx, t in enumerate(tracks):
+        if t.id == track.id:
+            page = idx
+            break
+
     await cb.answer("✅ Добавил в товары")
     await cb.message.edit_text(
-        _quick_preview_text(product=product, already_tracked=True),
-        reply_markup=_quick_item_kb(wb_item_id, already_tracked=True),
+        format_track_text(track),
+        reply_markup=await _track_kb_with_usage(
+            session=session,
+            redis=redis,
+            user_tg_id=cb.from_user.id,
+            user_plan=user.plan,
+            track=track,
+            page=page,
+            total=len(tracks),
+        ),
     )
 
 
