@@ -95,6 +95,8 @@ async def compare_products_with_llm(
         logger.exception("product-compare llm request failed")
         return fallback
 
+    _log_token_usage(data)
+
     parsed = _parse_compare_result(data)
     if not parsed:
         return fallback
@@ -139,6 +141,41 @@ def _chat_completions_url(base_url: str) -> str:
     if normalized.endswith("/chat/completions"):
         return normalized
     return f"{normalized}/chat/completions"
+
+
+def _log_token_usage(payload: object) -> None:
+    if not isinstance(payload, dict):
+        return
+    usage = payload.get("usage")
+    if not isinstance(usage, dict):
+        return
+
+    prompt_tokens = usage.get("prompt_tokens")
+    completion_tokens = usage.get("completion_tokens")
+    total_tokens = usage.get("total_tokens")
+
+    try:
+        p = int(prompt_tokens) if prompt_tokens is not None else None
+    except Exception:
+        p = None
+    try:
+        c = int(completion_tokens) if completion_tokens is not None else None
+    except Exception:
+        c = None
+    try:
+        t = int(total_tokens) if total_tokens is not None else None
+    except Exception:
+        t = None
+
+    if p is None and c is None and t is None:
+        return
+
+    logger.info(
+        "product-compare token usage: prompt=%s completion=%s total=%s",
+        p,
+        c,
+        t,
+    )
 
 
 def _parse_compare_result(payload: object) -> CompareResult | None:
