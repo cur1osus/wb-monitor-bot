@@ -8,6 +8,7 @@ from secrets import token_urlsafe
 from typing import TYPE_CHECKING
 
 from sqlalchemy import exists, func, or_, select, update
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -591,10 +592,15 @@ async def is_duplicate_event(
 
 async def log_event(
     session: AsyncSession, track_id: int, event_type: str, event_hash: str
-) -> None:
-    session.add(
-        AlertLogModel(track_id=track_id, event_type=event_type, event_hash=event_hash)
+) -> bool:
+    stmt = (
+        insert(AlertLogModel)
+        .values(track_id=track_id, event_type=event_type, event_hash=event_hash)
+        .on_conflict_do_nothing(index_elements=[AlertLogModel.event_hash])
+        .returning(AlertLogModel.id)
     )
+    inserted_id = await session.scalar(stmt)
+    return inserted_id is not None
 
 
 async def get_admin_stats(session: AsyncSession, *, days: int) -> AdminStats:

@@ -19,7 +19,6 @@ from bot.services.repository import (
     due_tracks_python_safe,
     expire_pro_users,
     get_runtime_config,
-    is_duplicate_event,
     log_event,
 )
 from bot.services.wb_client import fetch_product
@@ -161,9 +160,9 @@ async def run_cycle(
 
                     for ev in events:
                         h = _hash_event(t.id, "event", ev)
-                        if await is_duplicate_event(db_session, t.id, h):
+                        inserted = await log_event(db_session, t.id, "event", h)
+                        if not inserted:
                             continue
-                        await log_event(db_session, t.id, "event", h)
                         await bot.send_message(
                             user_tg_id,
                             tx.WORKER_NOTIFY_TEMPLATE.format(
