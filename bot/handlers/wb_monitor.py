@@ -352,10 +352,6 @@ def _feature_period_phrase(period: str) -> str:
     return "в месяц" if period == "month" else "в день"
 
 
-def _feature_used_label(period: str) -> str:
-    return "в этом месяце" if period == "month" else "сегодня"
-
-
 def _feature_period_title(period: str) -> str:
     return "месяц" if period == "month" else "день"
 
@@ -364,6 +360,16 @@ def _feature_limit(plan: str, feature: str) -> int:
     plan_key = plan if plan in _FEATURE_LIMITS else "free"
     limits = _FEATURE_LIMITS.get(plan_key, _FEATURE_LIMITS["free"])
     return int(limits.get(feature, 0))
+
+
+def _has_active_subscription(user: object, *, now: datetime) -> bool:
+    plan = str(getattr(user, "plan", "free"))
+    if not _is_paid_plan(plan):
+        return False
+    expires_at = getattr(user, "pro_expires_at", None)
+    if expires_at is None:
+        return True
+    return expires_at >= now
 
 
 def _build_payment_payload(
@@ -2148,6 +2154,8 @@ async def wb_plan_cb(
     user = await get_or_create_monitor_user(
         session, cb.from_user.id, cb.from_user.username
     )
+    now = datetime.now(UTC).replace(tzinfo=None)
+    has_active_subscription = _has_active_subscription(user, now=now)
     cfg = runtime_config_view(await get_runtime_config(session))
     tracks_used = await count_user_tracks(session, user.id, active_only=True)
     tracks_limit = 50 if _is_paid_plan(user.plan) else 5
@@ -2170,6 +2178,8 @@ async def wb_plan_cb(
         feature="reviews",
         period=reviews_period,
     )
+    cheap_left = max(0, cheap_limit - cheap_used)
+    reviews_left = max(0, reviews_limit - reviews_used)
     if user.plan == _PLAN_DB_PRO_PLUS:
         plan_label = tx.PLAN_BADGE_PRO_PLUS
     elif user.plan == _PLAN_DB_PRO:
@@ -2184,23 +2194,24 @@ async def wb_plan_cb(
         interval=interval,
         cheap_period=_feature_period_phrase(cheap_period),
         cheap_limit=cheap_limit,
-        cheap_used_label=_feature_used_label(cheap_period),
-        cheap_used=cheap_used,
+        cheap_left=cheap_left,
         reviews_period=_feature_period_phrase(reviews_period),
         reviews_limit=reviews_limit,
-        reviews_used_label=_feature_used_label(reviews_period),
-        reviews_used=reviews_used,
+        reviews_left=reviews_left,
     )
     if _is_paid_plan(user.plan) and user.pro_expires_at:
         text += tx.PLAN_EXPIRES_LINE.format(
             expires=user.pro_expires_at.strftime("%d.%m.%Y")
         )
-    text += tx.PLAN_SELECT_PROMPT
+    if not has_active_subscription:
+        text += tx.PLAN_SELECT_PROMPT
 
     await cb.answer()
     await cb.message.edit_text(
         text,
-        reply_markup=plan_overview_kb(),
+        reply_markup=plan_overview_kb(
+            show_purchase_buttons=not has_active_subscription
+        ),
     )
 
 
@@ -2214,6 +2225,10 @@ async def wb_plan_offer_cb(cb: CallbackQuery, session: AsyncSession) -> None:
     )
 
     now = datetime.now(UTC).replace(tzinfo=None)
+    if _has_active_subscription(user, now=now):
+        await cb.answer(tx.PLAN_ALREADY_ACTIVE, show_alert=True)
+        return
+
     discount = await get_user_active_discount(session, user_id=user.id, now=now)
     amount = _discounted_amount(_plan_base_amount(offer_code), discount)
     cfg = runtime_config_view(await get_runtime_config(session))
@@ -2241,6 +2256,10 @@ async def wb_pay_choice_cb(cb: CallbackQuery, session: AsyncSession) -> None:
     )
 
     now = datetime.now(UTC).replace(tzinfo=None)
+    if _has_active_subscription(user, now=now):
+        await cb.answer(tx.PLAN_ALREADY_ACTIVE, show_alert=True)
+        return
+
     discount = await get_user_active_discount(session, user_id=user.id, now=now)
     amount = _discounted_amount(_plan_base_amount(offer_code), discount)
     cfg = runtime_config_view(await get_runtime_config(session))
@@ -2273,6 +2292,10 @@ async def wb_pay_card_cb(cb: CallbackQuery, session: AsyncSession) -> None:
         session, cb.from_user.id, cb.from_user.username
     )
     now = datetime.now(UTC).replace(tzinfo=None)
+    if _has_active_subscription(user, now=now):
+        await cb.answer(tx.PLAN_ALREADY_ACTIVE, show_alert=True)
+        return
+
     discount = await get_user_active_discount(session, user_id=user.id, now=now)
     days = _plan_days(offer_code)
     amount_rub = _discounted_amount(_plan_base_amount(offer_code), discount)
@@ -2312,6 +2335,10 @@ async def wb_pay_stars_cb(cb: CallbackQuery, session: AsyncSession) -> None:
         session, cb.from_user.id, cb.from_user.username
     )
     now = datetime.now(UTC).replace(tzinfo=None)
+    if _has_active_subscription(user, now=now):
+        await cb.answer(tx.PLAN_ALREADY_ACTIVE, show_alert=True)
+        return
+
     discount = await get_user_active_discount(session, user_id=user.id, now=now)
     days = _plan_days(offer_code)
     amount = _discounted_amount(_plan_base_amount(offer_code), discount)

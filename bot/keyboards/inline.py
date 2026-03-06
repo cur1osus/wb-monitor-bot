@@ -240,9 +240,10 @@ def plan_kb(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def plan_overview_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
+def plan_overview_kb(*, show_purchase_buttons: bool = True) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    if show_purchase_buttons:
+        rows.append(
             [
                 _btn(tx.BTN_PLAN_SELECT_PRO, "wbm:plan:offer:pro", style="primary"),
                 _btn(
@@ -250,10 +251,10 @@ def plan_overview_kb() -> InlineKeyboardMarkup:
                     "wbm:plan:offer:proplus",
                     style="success",
                 ),
-            ],
-            [_btn(tx.BTN_BACK_MENU, "wbm:home:0")],
-        ]
-    )
+            ]
+        )
+    rows.append([_btn(tx.BTN_BACK_MENU, "wbm:home:0")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def plan_offer_kb(

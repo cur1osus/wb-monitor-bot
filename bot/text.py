@@ -161,11 +161,12 @@ PLAN_TEXT = (
     "Лимиты тарифа:\n"
     "• 📦 Треков: <b>{tracks_limit}</b> (используется {tracks_used})\n"
     "• ⏱ Интервал проверок: <b>{interval} мин</b>\n"
-    "• 🔎 Поиск товаров {cheap_period}: <b>{cheap_limit}</b> ({cheap_used_label} {cheap_used})\n"
-    "• 🧠 Анализ отзывов {reviews_period}: <b>{reviews_limit}</b> ({reviews_used_label} {reviews_used})"
+    "• 🔎 Поиск товаров {cheap_period}: <b>{cheap_limit}</b> (осталось {cheap_left})\n"
+    "• 🧠 Анализ отзывов {reviews_period}: <b>{reviews_limit}</b> (осталось {reviews_left})"
 )
 PLAN_EXPIRES_LINE = "\n• 📅 Действует до: <b>{expires}</b>"
 PLAN_SELECT_PROMPT = "\n\nВыберите вариант подписки ниже:"
+PLAN_ALREADY_ACTIVE = "✅ У вас уже активна подписка."
 PLAN_OFFER_TEXT = (
     "💎 <b>{title}</b>\n\n"
     "Условия:\n"
@@ -174,9 +175,6 @@ PLAN_OFFER_TEXT = (
     "• ⏱ Интервал проверок: <b>{interval} мин</b>\n"
     "• 🔎 Поиск товаров {cheap_period}: <b>{cheap_limit}</b>\n"
     "• 🧠 Анализ отзывов {reviews_period}: <b>{reviews_limit}</b>\n\n"
-    "Стоимость:\n"
-    "• 💳 <b>{card_amount}₽</b>\n"
-    "• ⭐ <b>{stars_amount} звёзд</b>\n\n"
     "{note}"
 )
 PLAN_OFFER_PRO_TITLE = "PRO"
