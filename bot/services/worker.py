@@ -37,7 +37,6 @@ def _msg(key: str, **kw: str | int) -> str:
     return tx.WORKER_EVENTS[key].format(**kw)
 
 
-
 def _hash_event(track_id: int, kind: str, payload: str) -> str:
     return hashlib.sha256(f"{track_id}:{kind}:{payload}".encode()).hexdigest()[:48]
 
@@ -63,7 +62,10 @@ async def run_cycle(
 
                 logger.info(
                     "TRACK_CHECK: track_id=%s, wb_item_id=%s, last_in_stock=%s, snap.in_stock=%s",
-                    t.id, t.wb_item_id, t.last_in_stock, snap.in_stock
+                    t.id,
+                    t.wb_item_id,
+                    t.last_in_stock,
+                    snap.in_stock,
                 )
 
                 # Сначала всегда обновляем last_* и снапшот — НЕЗАВИСИМО от уведомлений.
@@ -92,7 +94,11 @@ async def run_cycle(
                 t.last_sizes = snap.sizes
                 t.last_checked_at = now
                 t.error_count = 0
-                logger.info("TRACK_UPDATED: track_id=%s, last_in_stock=%s", t.id, t.last_in_stock)
+                logger.info(
+                    "TRACK_UPDATED: track_id=%s, last_in_stock=%s",
+                    t.id,
+                    t.last_in_stock,
+                )
 
                 # Теперь вычисляем события на основе предыдущих значений (prev_*).
                 async with db_session.begin_nested():
@@ -115,12 +121,14 @@ async def run_cycle(
                     if t.watch_stock and prev_in_stock is False and snap.in_stock:
                         logger.info(
                             "IN_STOCK_EVENT: track_id=%s, prev_in_stock=%s, snap.in_stock=%s",
-                            t.id, prev_in_stock, snap.in_stock
+                            t.id,
+                            prev_in_stock,
+                            snap.in_stock,
                         )
                         events.append(_msg("in_stock", track_id=t.id))
 
                     if (
-                        t.user.plan == "pro"
+                        t.user.plan in {"pro", "pro_plus"}
                         and t.watch_qty
                         and prev_qty is not None
                         and snap.total_qty is not None
@@ -166,7 +174,6 @@ async def run_cycle(
                             link_preview_options=LinkPreviewOptions(is_disabled=True),
                         )
                         t.last_notified_at = now
-
 
             except Exception:
                 logger.exception("WB monitor track failed (track_id=%s)", track_id)

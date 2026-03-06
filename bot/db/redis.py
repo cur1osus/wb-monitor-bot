@@ -95,7 +95,7 @@ class MonitorUserRD(_RDBase):
 
     # ── удобные свойства ──────────────────────────────────────────────────────
     def is_pro(self) -> bool:
-        if self.plan != "pro":
+        if self.plan not in {"pro", "pro_plus"}:
             return False
         if self.pro_expires_at:
             return datetime.fromisoformat(self.pro_expires_at) > datetime.utcnow()  # noqa: DTZ003
@@ -307,15 +307,19 @@ class QuickSimilarSearchCacheRD(_RDBase):
 
 # ─── FeatureUsageDailyRD ──────────────────────────────────────────────────────
 class FeatureUsageDailyRD:
-    """Счетчик обращений к тяжелым фичам по дням (UTC)."""
+    """Счетчик обращений к тяжелым фичам по дням/месяцам (UTC)."""
 
     @staticmethod
-    def _key(*, tg_user_id: int, feature: str, day_key: str) -> str:
-        return f"FeatureUsageDailyRD:{feature}:{tg_user_id}:{day_key}"
+    def _key(*, tg_user_id: int, feature: str, window_key: str) -> str:
+        return f"FeatureUsageDailyRD:{feature}:{tg_user_id}:{window_key}"
 
     @staticmethod
     def _day_key(now: datetime) -> str:
         return now.strftime("%Y%m%d")
+
+    @staticmethod
+    def _month_key(now: datetime) -> str:
+        return now.strftime("%Y%m")
 
     @staticmethod
     def _ttl_until_day_end(now: datetime) -> int:
@@ -327,6 +331,35 @@ class FeatureUsageDailyRD:
         )
         return max(1, int((next_day - now).total_seconds()))
 
+    @staticmethod
+    def _ttl_until_month_end(now: datetime) -> int:
+        if now.month == 12:
+            next_month = now.replace(
+                year=now.year + 1,
+                month=1,
+                day=1,
+                hour=0,
+                minute=0,
+                second=0,
+                microsecond=0,
+            )
+        else:
+            next_month = now.replace(
+                month=now.month + 1,
+                day=1,
+                hour=0,
+                minute=0,
+                second=0,
+                microsecond=0,
+            )
+        return max(1, int((next_month - now).total_seconds()))
+
+    @classmethod
+    def _window_params(cls, *, now: datetime, period: str) -> tuple[str, int]:
+        if period == "month":
+            return cls._month_key(now), cls._ttl_until_month_end(now)
+        return cls._day_key(now), cls._ttl_until_day_end(now)
+
     @classmethod
     async def try_consume(
         cls,
@@ -334,20 +367,20 @@ class FeatureUsageDailyRD:
         *,
         tg_user_id: int,
         feature: str,
-        daily_limit: int,
+        limit: int,
+        period: str = "day",
     ) -> tuple[bool, int]:
         now = datetime.utcnow()  # noqa: DTZ003
-        day_key = cls._day_key(now)
-        ttl = cls._ttl_until_day_end(now)
-        key = cls._key(tg_user_id=tg_user_id, feature=feature, day_key=day_key)
+        window_key, ttl = cls._window_params(now=now, period=period)
+        key = cls._key(tg_user_id=tg_user_id, feature=feature, window_key=window_key)
 
         used_now = int(await redis.incr(key))
         if used_now == 1:
             await redis.expire(key, ttl)
 
-        if used_now > daily_limit:
+        if used_now > limit:
             await redis.decr(key)
-            return False, daily_limit
+            return False, limit
 
         return True, used_now
 
@@ -358,10 +391,11 @@ class FeatureUsageDailyRD:
         *,
         tg_user_id: int,
         feature: str,
+        period: str = "day",
     ) -> int:
         now = datetime.utcnow()  # noqa: DTZ003
-        day_key = cls._day_key(now)
-        key = cls._key(tg_user_id=tg_user_id, feature=feature, day_key=day_key)
+        window_key, _ttl = cls._window_params(now=now, period=period)
+        key = cls._key(tg_user_id=tg_user_id, feature=feature, window_key=window_key)
         raw = await redis.get(key)
         if raw is None:
             return 0

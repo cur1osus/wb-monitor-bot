@@ -42,9 +42,15 @@ def dashboard_text(
     free_interval_min: int = FREE_INTERVAL,
     pro_interval_min: int = PRO_INTERVAL,
 ) -> str:
-    limit = PRO_LIMIT if plan == "pro" else FREE_LIMIT
-    interval = pro_interval_min if plan == "pro" else free_interval_min
-    plan_badge = tx.PLAN_BADGE_PRO if plan == "pro" else tx.PLAN_BADGE_FREE
+    is_paid = plan in {"pro", "pro_plus"}
+    limit = PRO_LIMIT if is_paid else FREE_LIMIT
+    interval = pro_interval_min if is_paid else free_interval_min
+    if plan == "pro_plus":
+        plan_badge = tx.PLAN_BADGE_PRO_PLUS
+    elif plan == "pro":
+        plan_badge = tx.PLAN_BADGE_PRO
+    else:
+        plan_badge = tx.PLAN_BADGE_FREE
     return tx.dashboard_text(
         plan_badge=plan_badge,
         used=used,
@@ -165,10 +171,18 @@ def settings_kb(
     # Кнопка отслеживания колебаний цены (доступна всем)
     fluctuation_style = "success" if price_fluctuation_on else None
     fluctuation_label = (
-        tx.PRICE_FLUCTUATION_ON_LABEL if price_fluctuation_on else tx.PRICE_FLUCTUATION_OFF_LABEL
+        tx.PRICE_FLUCTUATION_ON_LABEL
+        if price_fluctuation_on
+        else tx.PRICE_FLUCTUATION_OFF_LABEL
     )
     rows.append(
-        [_btn(fluctuation_label, f"wbm:price_fluctuation:{track_id}", style=fluctuation_style)]
+        [
+            _btn(
+                fluctuation_label,
+                f"wbm:price_fluctuation:{track_id}",
+                style=fluctuation_style,
+            )
+        ]
     )
     if pro_plan:
         qty_style = "success" if qty_on else None
@@ -195,13 +209,17 @@ def plan_kb(
         # Две кнопки оплаты сразу: карта и звёзды
         if discount:
             card_amount = max(1, int(round(150 * (100 - discount.percent) / 100)))
-            card_text = tx.BTN_PAY_CARD_DISCOUNT.format(amount=card_amount, percent=discount.percent)
+            card_text = tx.BTN_PAY_CARD_DISCOUNT.format(
+                amount=card_amount, percent=discount.percent
+            )
             stars_amount = max(1, int(round(150 * (100 - discount.percent) / 100)))
-            stars_text = tx.BTN_PAY_PRO_DISCOUNT.format(amount=stars_amount, percent=discount.percent)
+            stars_text = tx.BTN_PAY_PRO_DISCOUNT.format(
+                amount=stars_amount, percent=discount.percent
+            )
         else:
             card_text = tx.BTN_PAY_CARD
             stars_text = tx.BTN_PAY_PRO
-        
+
         rows.append([_btn(card_text, "wbm:pay:card", style="primary")])
         rows.append([_btn(stars_text, "wbm:pay:stars")])
     else:
@@ -222,26 +240,75 @@ def plan_kb(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def plan_overview_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                _btn(tx.BTN_PLAN_SELECT_PRO, "wbm:plan:offer:pro", style="primary"),
+                _btn(
+                    tx.BTN_PLAN_SELECT_PRO_PLUS,
+                    "wbm:plan:offer:proplus",
+                    style="success",
+                ),
+            ],
+            [_btn(tx.BTN_BACK_MENU, "wbm:home:0")],
+        ]
+    )
+
+
+def plan_offer_kb(
+    *,
+    offer_code: str,
+    card_amount: int,
+    stars_amount: int,
+    discount: object | None = None,
+) -> InlineKeyboardMarkup:
+    if discount:
+        card_text = tx.BTN_PAY_CARD_DISCOUNT.format(
+            amount=card_amount,
+            percent=discount.percent,
+        )
+        stars_text = tx.BTN_PAY_PRO_DISCOUNT.format(
+            amount=stars_amount,
+            percent=discount.percent,
+        )
+    else:
+        card_text = tx.BTN_PAY_CARD_AMOUNT.format(amount=card_amount)
+        stars_text = tx.BTN_PAY_STARS_AMOUNT.format(amount=stars_amount)
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [_btn(card_text, f"wbm:pay:card:{offer_code}", style="primary")],
+            [_btn(stars_text, f"wbm:pay:stars:{offer_code}")],
+            [_btn(tx.BTN_BACK, "wbm:plan:0")],
+        ]
+    )
+
+
 def payment_choice_kb(discount: object | None = None) -> InlineKeyboardMarkup:
     """Клавиатура выбора способа оплаты."""
     rows: list[list[InlineKeyboardButton]] = []
-    
+
     # Оплата картой
     if discount:
         card_amount = max(1, int(round(150 * (100 - discount.percent) / 100)))
-        card_text = tx.BTN_PAY_CARD_DISCOUNT.format(amount=card_amount, percent=discount.percent)
+        card_text = tx.BTN_PAY_CARD_DISCOUNT.format(
+            amount=card_amount, percent=discount.percent
+        )
     else:
         card_text = tx.BTN_PAY_CARD
     rows.append([_btn(card_text, "wbm:pay:card", style="primary")])
-    
+
     # Оплата звёздами
     if discount:
         stars_amount = max(1, int(round(150 * (100 - discount.percent) / 100)))
-        stars_text = tx.BTN_PAY_PRO_DISCOUNT.format(amount=stars_amount, percent=discount.percent)
+        stars_text = tx.BTN_PAY_PRO_DISCOUNT.format(
+            amount=stars_amount, percent=discount.percent
+        )
     else:
         stars_text = tx.BTN_PAY_STARS
     rows.append([_btn(stars_text, "wbm:pay:stars")])
-    
+
     rows.append([_btn(tx.BTN_BACK, "wbm:plan:0")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -343,9 +410,7 @@ def support_kb() -> InlineKeyboardMarkup:
 def support_cancel_kb() -> InlineKeyboardMarkup:
     """Клавиатура отмены создания тикета."""
     return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [_btn(tx.BTN_SUPPORT_CANCEL, "wbm:support:cancel")]
-        ]
+        inline_keyboard=[[_btn(tx.BTN_SUPPORT_CANCEL, "wbm:support:cancel")]]
     )
 
 
@@ -364,8 +429,16 @@ def admin_support_ticket_kb(ticket_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                _btn(tx.BTN_REPLY_TICKET, f"wbm:support:admin:reply:{ticket_id}", style="primary"),
-                _btn(tx.BTN_CLOSE_TICKET, f"wbm:support:admin:close:{ticket_id}", style="danger"),
+                _btn(
+                    tx.BTN_REPLY_TICKET,
+                    f"wbm:support:admin:reply:{ticket_id}",
+                    style="primary",
+                ),
+                _btn(
+                    tx.BTN_CLOSE_TICKET,
+                    f"wbm:support:admin:close:{ticket_id}",
+                    style="danger",
+                ),
             ],
         ]
     )

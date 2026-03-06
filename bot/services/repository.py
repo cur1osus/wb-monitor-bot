@@ -408,8 +408,12 @@ async def apply_runtime_intervals(
     free_interval_min: int,
     pro_interval_min: int,
 ) -> None:
-    pro_user_ids = select(MonitorUserModel.id).where(MonitorUserModel.plan == "pro")
-    free_user_ids = select(MonitorUserModel.id).where(MonitorUserModel.plan != "pro")
+    pro_user_ids = select(MonitorUserModel.id).where(
+        MonitorUserModel.plan.in_(("pro", "pro_plus"))
+    )
+    free_user_ids = select(MonitorUserModel.id).where(
+        ~MonitorUserModel.plan.in_(("pro", "pro_plus"))
+    )
 
     await session.execute(
         update(TrackModel)
@@ -430,7 +434,7 @@ async def expire_pro_users(
     free_interval_min: int = FREE_INTERVAL,
 ) -> int:
     stmt_ids = select(MonitorUserModel.id, MonitorUserModel.tg_user_id).where(
-        MonitorUserModel.plan == "pro",
+        MonitorUserModel.plan.in_(("pro", "pro_plus")),
         MonitorUserModel.pro_expires_at.is_not(None),
         MonitorUserModel.pro_expires_at < now,
     )
@@ -622,7 +626,7 @@ async def get_admin_stats(session: AsyncSession, *, days: int) -> AdminStats:
     pro_users = int(
         await session.scalar(
             select(func.count(MonitorUserModel.id)).where(
-                MonitorUserModel.plan == "pro",
+                MonitorUserModel.plan.in_(("pro", "pro_plus")),
                 or_(
                     MonitorUserModel.pro_expires_at.is_(None),
                     MonitorUserModel.pro_expires_at >= now,
@@ -766,7 +770,7 @@ async def reply_to_ticket(
     ticket = await get_ticket_by_id(session, ticket_id)
     if not ticket:
         return None
-    
+
     ticket.response = response
     ticket.responded_by_tg_id = responded_by_tg_id
     ticket.responded_at = datetime.now(UTC).replace(tzinfo=None)
@@ -783,7 +787,7 @@ async def close_ticket(
     ticket = await get_ticket_by_id(session, ticket_id)
     if not ticket:
         return False
-    
+
     ticket.status = "closed"
     await session.commit()
     return True

@@ -55,8 +55,8 @@ from bot.keyboards.inline import (
     admin_config_input_kb,
     admin_config_kb,
     admin_panel_kb,
-    payment_choice_kb,
-    plan_kb,
+    plan_offer_kb,
+    plan_overview_kb,
     paged_track_kb,
     ref_kb,
     settings_kb,
@@ -65,7 +65,6 @@ from bot.keyboards.inline import (
     support_media_confirmation_kb,
 )
 from bot.services.repository import (
-    ActiveDiscount,
     count_active_promos,
     count_promo_activations,
     create_promo_link,
@@ -120,10 +119,27 @@ router = Router()
 logger = logging.getLogger(__name__)
 _LIKELY_WB_INPUT_RE = re.compile(r"wildberries|wb\.ru|\d{6,15}", re.IGNORECASE)
 _ADMIN_PROMO_PAGE_SIZE = 8
-_WB_ENABLE_SELENIUM_SIMILAR = (
-    os.getenv("WB_ENABLE_SELENIUM_SIMILAR", "0").strip().lower()
-    in {"1", "true", "yes", "on"}
-)
+_WB_ENABLE_SELENIUM_SIMILAR = os.getenv(
+    "WB_ENABLE_SELENIUM_SIMILAR", "0"
+).strip().lower() in {"1", "true", "yes", "on"}
+_PLAN_PRO_CODE = "pro"
+_PLAN_PRO_PLUS_CODE = "proplus"
+_PLAN_DB_PRO = "pro"
+_PLAN_DB_PRO_PLUS = "pro_plus"
+_PAID_PLANS = {_PLAN_DB_PRO, _PLAN_DB_PRO_PLUS}
+_PLAN_BASE_AMOUNT = {
+    _PLAN_PRO_CODE: 150,
+    _PLAN_PRO_PLUS_CODE: 250,
+}
+_PLAN_DAYS = {
+    _PLAN_PRO_CODE: 30,
+    _PLAN_PRO_PLUS_CODE: 30,
+}
+_FEATURE_LIMITS: dict[str, dict[str, int]] = {
+    "free": {"cheap": 2, "reviews": 3},
+    _PLAN_DB_PRO: {"cheap": 300, "reviews": 180},
+    _PLAN_DB_PRO_PLUS: {"cheap": 600, "reviews": 360},
+}
 
 _COLOR_ALIASES: dict[str, set[str]] = {
     "black": {"черн", "black"},
@@ -226,13 +242,22 @@ async def _live_filter_cheaper_in_stock(
             continue
 
         # Card-level gender/segment proxy from WB kindId
-        if base_kind_id is not None and snap.kind_id is not None and snap.kind_id != base_kind_id:
+        if (
+            base_kind_id is not None
+            and snap.kind_id is not None
+            and snap.kind_id != base_kind_id
+        ):
             reason_counts["kind_mismatch"] += 1
             continue
 
         # Card-level color matching
         item_color_groups = _color_groups_from_card(snap.colors)
-        if enforce_color and base_color_groups and item_color_groups and base_color_groups.isdisjoint(item_color_groups):
+        if (
+            enforce_color
+            and base_color_groups
+            and item_color_groups
+            and base_color_groups.isdisjoint(item_color_groups)
+        ):
             reason_counts["color_mismatch"] += 1
             continue
 
@@ -269,25 +294,120 @@ def _model_signature(model: str, review_limit: int) -> str:
     return f"{model}|limit:{review_limit}"
 
 
-def _build_payment_payload(*, amount: int, discount_activation_id: int | None) -> str:
+def _normalize_offer_code(raw: str | None) -> str:
+    if raw == _PLAN_PRO_PLUS_CODE:
+        return _PLAN_PRO_PLUS_CODE
+    return _PLAN_PRO_CODE
+
+
+def _plan_db_name_from_offer(offer_code: str) -> str:
+    normalized = _normalize_offer_code(offer_code)
+    if normalized == _PLAN_PRO_PLUS_CODE:
+        return _PLAN_DB_PRO_PLUS
+    return _PLAN_DB_PRO
+
+
+def _is_paid_plan(plan: str) -> bool:
+    return plan in _PAID_PLANS
+
+
+def _plan_base_amount(offer_code: str) -> int:
+    return _PLAN_BASE_AMOUNT[_normalize_offer_code(offer_code)]
+
+
+def _plan_days(offer_code: str) -> int:
+    return _PLAN_DAYS[_normalize_offer_code(offer_code)]
+
+
+def _plan_title(offer_code: str) -> str:
+    normalized = _normalize_offer_code(offer_code)
+    return (
+        tx.PLAN_OFFER_PRO_PLUS_TITLE
+        if normalized == _PLAN_PRO_PLUS_CODE
+        else tx.PLAN_OFFER_PRO_TITLE
+    )
+
+
+def _plan_note(offer_code: str) -> str:
+    normalized = _normalize_offer_code(offer_code)
+    return (
+        tx.PLAN_OFFER_PRO_PLUS_NOTE
+        if normalized == _PLAN_PRO_PLUS_CODE
+        else tx.PLAN_OFFER_PRO_NOTE
+    )
+
+
+def _discounted_amount(base_amount: int, discount: object | None) -> int:
+    if not discount:
+        return base_amount
+    percent = int(getattr(discount, "percent", 0) or 0)
+    return max(1, int(round(base_amount * (100 - percent) / 100)))
+
+
+def _feature_period(plan: str) -> str:
+    return "month" if _is_paid_plan(plan) else "day"
+
+
+def _feature_period_phrase(period: str) -> str:
+    return "в месяц" if period == "month" else "в день"
+
+
+def _feature_used_label(period: str) -> str:
+    return "в этом месяце" if period == "month" else "сегодня"
+
+
+def _feature_period_title(period: str) -> str:
+    return "месяц" if period == "month" else "день"
+
+
+def _feature_limit(plan: str, feature: str) -> int:
+    plan_key = plan if plan in _FEATURE_LIMITS else "free"
+    limits = _FEATURE_LIMITS.get(plan_key, _FEATURE_LIMITS["free"])
+    return int(limits.get(feature, 0))
+
+
+def _build_payment_payload(
+    *,
+    offer_code: str,
+    days: int,
+    amount: int,
+    discount_activation_id: int | None,
+) -> str:
+    plan = _normalize_offer_code(offer_code)
     activation = discount_activation_id or 0
-    return f"wbm_pro_30d:{activation}:{amount}"
+    return f"wbm_sub:{plan}:{days}:{activation}:{amount}"
 
 
-def _parse_payment_payload(payload: str | None) -> tuple[int, int] | None:
+def _parse_payment_payload(payload: str | None) -> tuple[int, int, str, int] | None:
     if not payload:
         return None
+
     parts = payload.split(":")
-    if len(parts) != 3 or parts[0] != "wbm_pro_30d":
+
+    # Legacy payload format.
+    if len(parts) == 3 and parts[0] == "wbm_pro_30d":
+        try:
+            activation_id = int(parts[1])
+            amount = int(parts[2])
+        except ValueError:
+            return None
+        if activation_id < 0 or amount <= 0:
+            return None
+        return activation_id, amount, _PLAN_PRO_CODE, 30
+
+    if len(parts) != 5 or parts[0] != "wbm_sub":
         return None
+
+    offer_code = _normalize_offer_code(parts[1])
     try:
-        activation_id = int(parts[1])
-        amount = int(parts[2])
+        days = int(parts[2])
+        activation_id = int(parts[3])
+        amount = int(parts[4])
     except ValueError:
         return None
-    if activation_id < 0 or amount <= 0:
+    if activation_id < 0 or amount <= 0 or days <= 0:
         return None
-    return activation_id, amount
+    return activation_id, amount, offer_code, days
 
 
 def _parse_promo_create_payload(text: str) -> tuple[int, int] | None:
@@ -382,19 +502,31 @@ def _promo_card_text(*, promo: object, activations: int, bot_username: str) -> s
     )
 
 
-def _pay_button_text(discount: ActiveDiscount | None) -> str:
-    if not discount:
-        return tx.BTN_PAY_PRO
-    amount = max(1, int(round(150 * (100 - discount.percent) / 100)))
-    return tx.BTN_PAY_PRO_DISCOUNT.format(amount=amount, percent=discount.percent)
-
-
-def _daily_feature_limit(plan: str, cfg: "RuntimeConfigView") -> int:
-    return cfg.pro_daily_ai_limit if plan == "pro" else cfg.free_daily_ai_limit
-
-
 def _format_review_insights_text(track_title: str, insights: ReviewInsights) -> str:
     return tx.review_insights_text(track_title, insights)
+
+
+def _plan_offer_text(
+    *,
+    offer_code: str,
+    cfg: "RuntimeConfigView",
+    amount: int,
+) -> str:
+    plan_name = _plan_db_name_from_offer(offer_code)
+    period = _feature_period(plan_name)
+    return tx.PLAN_OFFER_TEXT.format(
+        title=_plan_title(offer_code),
+        days=_plan_days(offer_code),
+        tracks_limit=50,
+        interval=cfg.pro_interval_min,
+        cheap_period=_feature_period_phrase(period),
+        reviews_period=_feature_period_phrase(period),
+        cheap_limit=_feature_limit(plan_name, "cheap"),
+        reviews_limit=_feature_limit(plan_name, "reviews"),
+        card_amount=amount,
+        stars_amount=amount,
+        note=_plan_note(offer_code),
+    )
 
 
 async def _progress_spinner(
@@ -442,17 +574,20 @@ async def _track_kb_with_usage(
     total: int,
     confirm_remove: bool = False,
 ) -> InlineKeyboardMarkup:
-    cfg = runtime_config_view(await get_runtime_config(session))
-    limit = _daily_feature_limit(user_plan, cfg)
+    cheap_limit = _feature_limit(user_plan, "cheap")
+    reviews_limit = _feature_limit(user_plan, "reviews")
+    period = _feature_period(user_plan)
     cheap_used = await FeatureUsageDailyRD.get_used(
         redis,
         tg_user_id=user_tg_id,
         feature="cheap",
+        period=period,
     )
     reviews_used = await FeatureUsageDailyRD.get_used(
         redis,
         tg_user_id=user_tg_id,
         feature="reviews",
+        period=period,
     )
 
     return paged_track_kb(
@@ -463,12 +598,12 @@ async def _track_kb_with_usage(
         cheap_btn_text=tx.button_with_usage(
             tx.BTN_FIND_CHEAPER,
             used=cheap_used,
-            limit=limit,
+            limit=cheap_limit,
         ),
         reviews_btn_text=tx.button_with_usage(
             tx.BTN_REVIEW_ANALYSIS,
             used=reviews_used,
-            limit=limit,
+            limit=reviews_limit,
         ),
     )
 
@@ -498,7 +633,9 @@ async def _search_wb_loose_alternatives(
     except Exception:
         return []
 
-    products = data.get("data", {}).get("products", []) if isinstance(data, dict) else []
+    products = (
+        data.get("data", {}).get("products", []) if isinstance(data, dict) else []
+    )
     out: list[WbSimilarItemRD] = []
     for product in products:
         if not isinstance(product, dict):
@@ -584,17 +721,32 @@ async def wb_add_cb(cb: CallbackQuery) -> None:
     )
 
 
-def _quick_item_kb(wb_item_id: int, *, already_tracked: bool = False) -> InlineKeyboardMarkup:
+def _quick_item_kb(
+    wb_item_id: int, *, already_tracked: bool = False
+) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     if not already_tracked:
         rows.append(
-            [InlineKeyboardButton(text=tx.QUICK_ADD_BTN, callback_data=f"wbm:quick:add:{wb_item_id}")]
+            [
+                InlineKeyboardButton(
+                    text=tx.QUICK_ADD_BTN, callback_data=f"wbm:quick:add:{wb_item_id}"
+                )
+            ]
         )
     rows.append(
-        [InlineKeyboardButton(text=tx.QUICK_REVIEWS_BTN, callback_data=f"wbm:quick:reviews:{wb_item_id}")]
+        [
+            InlineKeyboardButton(
+                text=tx.QUICK_REVIEWS_BTN,
+                callback_data=f"wbm:quick:reviews:{wb_item_id}",
+            )
+        ]
     )
     rows.append(
-        [InlineKeyboardButton(text=tx.QUICK_SEARCH_BTN, callback_data=f"wbm:quick:search:{wb_item_id}")]
+        [
+            InlineKeyboardButton(
+                text=tx.QUICK_SEARCH_BTN, callback_data=f"wbm:quick:search:{wb_item_id}"
+            )
+        ]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -615,7 +767,9 @@ def _quick_preview_text(*, product: object, already_tracked: bool) -> str:
         if rating is not None
         else tx.TRACK_ADDED_RATING_UNKNOWN
     )
-    in_stock_text = tx.TRACK_ADDED_IN_STOCK_YES if in_stock else tx.TRACK_ADDED_IN_STOCK_NO
+    in_stock_text = (
+        tx.TRACK_ADDED_IN_STOCK_YES if in_stock else tx.TRACK_ADDED_IN_STOCK_NO
+    )
 
     text = tx.QUICK_ITEM_PREVIEW_TEMPLATE.format(
         title=title,
@@ -631,9 +785,23 @@ def _quick_preview_text(*, product: object, already_tracked: bool) -> str:
 def _quick_search_mode_kb(wb_item_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text=tx.SEARCH_MODE_CHEAPER_BTN, callback_data=f"wbm:quick:searchmode:cheap:{wb_item_id}")],
-            [InlineKeyboardButton(text=tx.SEARCH_MODE_SIMILAR_BTN, callback_data=f"wbm:quick:searchmode:similar:{wb_item_id}")],
-            [InlineKeyboardButton(text=tx.BTN_BACK, callback_data=f"wbm:quick:preview:{wb_item_id}")],
+            [
+                InlineKeyboardButton(
+                    text=tx.SEARCH_MODE_CHEAPER_BTN,
+                    callback_data=f"wbm:quick:searchmode:cheap:{wb_item_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=tx.SEARCH_MODE_SIMILAR_BTN,
+                    callback_data=f"wbm:quick:searchmode:similar:{wb_item_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=tx.BTN_BACK, callback_data=f"wbm:quick:preview:{wb_item_id}"
+                )
+            ],
         ]
     )
 
@@ -732,7 +900,7 @@ async def wb_quick_add_cb(
         return
 
     track_count = await count_user_tracks(session, user.id, active_only=True)
-    limit = 50 if user.plan == "pro" else 5
+    limit = 50 if _is_paid_plan(user.plan) else 5
     if track_count >= limit:
         await cb.answer(tx.TRACK_LIMIT_REACHED.format(limit=limit), show_alert=True)
         return
@@ -743,7 +911,9 @@ async def wb_quick_add_cb(
         return
 
     cfg = runtime_config_view(await get_runtime_config(session))
-    interval = cfg.pro_interval_min if user.plan == "pro" else cfg.free_interval_min
+    interval = (
+        cfg.pro_interval_min if _is_paid_plan(user.plan) else cfg.free_interval_min
+    )
     track_url = f"https://www.wildberries.ru/catalog/{wb_item_id}/detail.aspx"
     track = await create_track(
         session,
@@ -798,7 +968,11 @@ async def wb_quick_reviews_cb(
 
     back_preview_kb = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text=tx.BTN_BACK, callback_data=f"wbm:quick:preview:{wb_item_id}")],
+            [
+                InlineKeyboardButton(
+                    text=tx.BTN_BACK, callback_data=f"wbm:quick:preview:{wb_item_id}"
+                )
+            ],
         ]
     )
 
@@ -828,6 +1002,31 @@ async def wb_quick_reviews_cb(
             sample_limit_per_side=int(cached.sample_limit_per_side),
         )
     else:
+        user = await get_or_create_monitor_user(
+            session,
+            cb.from_user.id,
+            cb.from_user.username,
+        )
+        period = _feature_period(user.plan)
+        period_title = _feature_period_title(period)
+        feature_limit = _feature_limit(user.plan, "reviews")
+        allowed, _used = await FeatureUsageDailyRD.try_consume(
+            redis,
+            tg_user_id=cb.from_user.id,
+            feature="reviews",
+            limit=feature_limit,
+            period=period,
+        )
+        if not allowed:
+            await cb.message.edit_text(
+                tx.FEATURE_LIMIT_REVIEWS_REACHED.format(
+                    limit=feature_limit,
+                    period=period_title,
+                ),
+                reply_markup=back_preview_kb,
+            )
+            return
+
         try:
             insights = await analyze_reviews_with_llm(
                 wb_item_id=wb_item_id,
@@ -837,7 +1036,11 @@ async def wb_quick_reviews_cb(
                 api_base_url=se.agentplatform_base_url,
                 sample_limit_per_side=review_limit,
             )
-        except (ReviewAnalysisConfigError, ReviewAnalysisError, ReviewAnalysisRateLimitError) as exc:
+        except (
+            ReviewAnalysisConfigError,
+            ReviewAnalysisError,
+            ReviewAnalysisRateLimitError,
+        ) as exc:
             await cb.message.edit_text(str(exc), reply_markup=back_preview_kb)
             return
 
@@ -895,14 +1098,22 @@ async def wb_quick_searchmode_cb(
 
     back_quick_kb = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text=tx.BTN_BACK, callback_data=f"wbm:quick:search:{wb_item_id}")],
+            [
+                InlineKeyboardButton(
+                    text=tx.BTN_BACK, callback_data=f"wbm:quick:search:{wb_item_id}"
+                )
+            ],
         ]
     )
 
-    cached_search = await QuickSimilarSearchCacheRD.get(redis, wb_item_id=wb_item_id, mode=mode)
+    cached_search = await QuickSimilarSearchCacheRD.get(
+        redis, wb_item_id=wb_item_id, mode=mode
+    )
     alternatives: list[WbSimilarItemRD] = []
     current_price_text = str(product.price)
-    if cached_search is not None and (mode != "cheap" or cached_search.base_price == current_price_text):
+    if cached_search is not None and (
+        mode != "cheap" or cached_search.base_price == current_price_text
+    ):
         alternatives = [
             WbSimilarItemRD(
                 wb_item_id=item.wb_item_id,
@@ -915,6 +1126,31 @@ async def wb_quick_searchmode_cb(
 
     await cb.answer()
     if not alternatives:
+        user = await get_or_create_monitor_user(
+            session,
+            cb.from_user.id,
+            cb.from_user.username,
+        )
+        period = _feature_period(user.plan)
+        period_title = _feature_period_title(period)
+        feature_limit = _feature_limit(user.plan, "cheap")
+        allowed, _used = await FeatureUsageDailyRD.try_consume(
+            redis,
+            tg_user_id=cb.from_user.id,
+            feature="cheap",
+            limit=feature_limit,
+            period=period,
+        )
+        if not allowed:
+            await cb.answer(
+                tx.FEATURE_LIMIT_CHEAP_REACHED.format(
+                    limit=feature_limit,
+                    period=period_title,
+                ),
+                show_alert=True,
+            )
+            return
+
         progress_text = (
             tx.FIND_CHEAPER_PROGRESS.format(title=escape(product.title))
             if mode == "cheap"
@@ -974,7 +1210,9 @@ async def wb_quick_searchmode_cb(
 
     if not alternatives:
         text = (
-            tx.FIND_CHEAPER_EMPTY.format(title=escape(product.title), price=current_price_text)
+            tx.FIND_CHEAPER_EMPTY.format(
+                title=escape(product.title), price=current_price_text
+            )
             if mode == "cheap"
             else tx.FIND_SIMILAR_EMPTY.format(title=escape(product.title))
         )
@@ -983,13 +1221,17 @@ async def wb_quick_searchmode_cb(
 
     alternatives = sorted(alternatives, key=lambda x: Decimal(str(x.price)))
     header = (
-        tx.FIND_CHEAPER_HEADER.format(price=current_price_text, title=escape(product.title))
+        tx.FIND_CHEAPER_HEADER.format(
+            price=current_price_text, title=escape(product.title)
+        )
         if mode == "cheap"
         else tx.FIND_SIMILAR_HEADER.format(title=escape(product.title))
     )
     lines = [header, ""]
     for idx, item in enumerate(alternatives, start=1):
-        lines.append(f'{idx}. <a href="{item.url}">{escape(item.title)}</a> — <b>{item.price} ₽</b>')
+        lines.append(
+            f'{idx}. <a href="{item.url}">{escape(item.title)}</a> — <b>{item.price} ₽</b>'
+        )
     lines.append("")
     lines.append(tx.FIND_CHEAPER_TIP)
     await cb.message.edit_text(
@@ -1041,7 +1283,9 @@ def _page_picker_kb(
     page_buttons: list[InlineKeyboardButton] = []
     for i in range(safe_offset, end):
         label = f"[{i + 1}]" if i == current_page else str(i + 1)
-        page_buttons.append(InlineKeyboardButton(text=label, callback_data=f"wbm:page:{i}"))
+        page_buttons.append(
+            InlineKeyboardButton(text=label, callback_data=f"wbm:page:{i}")
+        )
         if len(page_buttons) >= per_row:
             rows.append(page_buttons)
             page_buttons = []
@@ -1423,16 +1667,22 @@ async def wb_find_cheaper_cb(
             cb.from_user.id,
             cb.from_user.username,
         )
-        daily_limit = _daily_feature_limit(user.plan, cfg)
+        period = _feature_period(user.plan)
+        period_title = _feature_period_title(period)
+        feature_limit = _feature_limit(user.plan, "cheap")
         allowed, _used = await FeatureUsageDailyRD.try_consume(
             redis,
             tg_user_id=cb.from_user.id,
             feature="cheap",
-            daily_limit=daily_limit,
+            limit=feature_limit,
+            period=period,
         )
         if not allowed:
             await cb.answer(
-                tx.FEATURE_LIMIT_CHEAP_REACHED.format(limit=daily_limit),
+                tx.FEATURE_LIMIT_CHEAP_REACHED.format(
+                    limit=feature_limit,
+                    period=period_title,
+                ),
                 show_alert=True,
             )
             return
@@ -1495,7 +1745,11 @@ async def wb_find_cheaper_cb(
                 priced.sort(key=lambda item: item.final_price)
 
                 cheaper = [item for item in priced if item.final_price < current.price]
-                selected = (cheaper[:10] if cheaper else priced[:10]) if mode == "cheap" else priced[:10]
+                selected = (
+                    (cheaper[:10] if cheaper else priced[:10])
+                    if mode == "cheap"
+                    else priced[:10]
+                )
                 reranked = [
                     WbSimilarItemRD(
                         wb_item_id=item.nm_id,
@@ -1643,7 +1897,9 @@ async def wb_find_cheaper_cb(
 
     if not alternatives:
         empty_text = (
-            tx.FIND_CHEAPER_EMPTY.format(title=escape(track.title), price=current_price_text)
+            tx.FIND_CHEAPER_EMPTY.format(
+                title=escape(track.title), price=current_price_text
+            )
             if mode == "cheap"
             else tx.FIND_SIMILAR_EMPTY.format(title=escape(track.title))
         )
@@ -1655,7 +1911,9 @@ async def wb_find_cheaper_cb(
 
     lines = [
         (
-            tx.FIND_CHEAPER_HEADER.format(price=current_price_text, title=escape(track.title))
+            tx.FIND_CHEAPER_HEADER.format(
+                price=current_price_text, title=escape(track.title)
+            )
             if mode == "cheap"
             else tx.FIND_SIMILAR_HEADER.format(title=escape(track.title))
         ),
@@ -1663,7 +1921,9 @@ async def wb_find_cheaper_cb(
     ]
 
     if mode == "similar" and color_relaxed:
-        lines.append("ℹ️ Для расширения выдачи ослабил фильтр по цвету (остальные проверки сохранены).")
+        lines.append(
+            "ℹ️ Для расширения выдачи ослабил фильтр по цвету (остальные проверки сохранены)."
+        )
         lines.append("")
 
     try:
@@ -1773,16 +2033,22 @@ async def wb_reviews_analysis_cb(
                 cb.from_user.id,
                 cb.from_user.username,
             )
-            daily_limit = _daily_feature_limit(user.plan, cfg)
+            period = _feature_period(user.plan)
+            period_title = _feature_period_title(period)
+            feature_limit = _feature_limit(user.plan, "reviews")
             allowed, _used = await FeatureUsageDailyRD.try_consume(
                 redis,
                 tg_user_id=cb.from_user.id,
                 feature="reviews",
-                daily_limit=daily_limit,
+                limit=feature_limit,
+                period=period,
             )
             if not allowed:
                 await cb.answer(
-                    tx.FEATURE_LIMIT_REVIEWS_REACHED.format(limit=daily_limit),
+                    tx.FEATURE_LIMIT_REVIEWS_REACHED.format(
+                        limit=feature_limit,
+                        period=period_title,
+                    ),
                     show_alert=True,
                 )
                 return
@@ -1865,7 +2131,7 @@ async def wb_settings_cb(cb: CallbackQuery, session: AsyncSession) -> None:
         reply_markup=settings_kb(
             track_id,
             has_sizes=bool(track.watch_sizes),
-            pro_plan=user.plan == "pro",
+            pro_plan=_is_paid_plan(user.plan),
             qty_on=track.watch_qty,
             stock_on=track.watch_stock,
             price_fluctuation_on=track.watch_price_fluctuation,
@@ -1874,42 +2140,91 @@ async def wb_settings_cb(cb: CallbackQuery, session: AsyncSession) -> None:
 
 
 @router.callback_query(F.data == "wbm:plan:0")
-async def wb_plan_cb(cb: CallbackQuery, session: AsyncSession) -> None:
+async def wb_plan_cb(
+    cb: CallbackQuery,
+    session: AsyncSession,
+    redis: "Redis",
+) -> None:
     user = await get_or_create_monitor_user(
         session, cb.from_user.id, cb.from_user.username
     )
     cfg = runtime_config_view(await get_runtime_config(session))
-    used = await count_user_tracks(session, user.id, active_only=True)
-    limit = 50 if user.plan == "pro" else 5
-    interval = cfg.pro_interval_min if user.plan == "pro" else cfg.free_interval_min
-
-    is_pro = user.plan == "pro"
-    expires_str = (
-        user.pro_expires_at.strftime("%d.%m.%Y")
-        if (is_pro and user.pro_expires_at)
-        else None
+    tracks_used = await count_user_tracks(session, user.id, active_only=True)
+    tracks_limit = 50 if _is_paid_plan(user.plan) else 5
+    interval = (
+        cfg.pro_interval_min if _is_paid_plan(user.plan) else cfg.free_interval_min
     )
+    cheap_period = _feature_period(user.plan)
+    reviews_period = _feature_period(user.plan)
+    cheap_limit = _feature_limit(user.plan, "cheap")
+    reviews_limit = _feature_limit(user.plan, "reviews")
+    cheap_used = await FeatureUsageDailyRD.get_used(
+        redis,
+        tg_user_id=cb.from_user.id,
+        feature="cheap",
+        period=cheap_period,
+    )
+    reviews_used = await FeatureUsageDailyRD.get_used(
+        redis,
+        tg_user_id=cb.from_user.id,
+        feature="reviews",
+        period=reviews_period,
+    )
+    if user.plan == _PLAN_DB_PRO_PLUS:
+        plan_label = tx.PLAN_BADGE_PRO_PLUS
+    elif user.plan == _PLAN_DB_PRO:
+        plan_label = tx.PLAN_BADGE_PRO
+    else:
+        plan_label = tx.PLAN_BADGE_FREE
+
     text = tx.PLAN_TEXT.format(
-        plan=user.plan.upper(),
-        used=used,
-        limit=limit,
+        plan=plan_label,
+        tracks_limit=tracks_limit,
+        tracks_used=tracks_used,
         interval=interval,
+        cheap_period=_feature_period_phrase(cheap_period),
+        cheap_limit=cheap_limit,
+        cheap_used_label=_feature_used_label(cheap_period),
+        cheap_used=cheap_used,
+        reviews_period=_feature_period_phrase(reviews_period),
+        reviews_limit=reviews_limit,
+        reviews_used_label=_feature_used_label(reviews_period),
+        reviews_used=reviews_used,
+    )
+    if _is_paid_plan(user.plan) and user.pro_expires_at:
+        text += tx.PLAN_EXPIRES_LINE.format(
+            expires=user.pro_expires_at.strftime("%d.%m.%Y")
+        )
+    text += tx.PLAN_SELECT_PROMPT
+
+    await cb.answer()
+    await cb.message.edit_text(
+        text,
+        reply_markup=plan_overview_kb(),
+    )
+
+
+@router.callback_query(F.data.regexp(r"wbm:plan:offer:(pro|proplus)"))
+async def wb_plan_offer_cb(cb: CallbackQuery, session: AsyncSession) -> None:
+    offer_code = _normalize_offer_code(cb.data.split(":")[3])
+    user = await get_or_create_monitor_user(
+        session,
+        cb.from_user.id,
+        cb.from_user.username,
     )
 
     now = datetime.now(UTC).replace(tzinfo=None)
     discount = await get_user_active_discount(session, user_id=user.id, now=now)
-    if is_pro:
-        pass
-    else:
-        text += tx.PLAN_PRO_UPSELL.format(interval=cfg.pro_interval_min)
-        if discount:
-            text += tx.PLAN_DISCOUNT_HINT.format(percent=discount.percent)
+    amount = _discounted_amount(_plan_base_amount(offer_code), discount)
+    cfg = runtime_config_view(await get_runtime_config(session))
 
+    await cb.answer()
     await cb.message.edit_text(
-        text,
-        reply_markup=plan_kb(
-            is_pro,
-            expires_str,
+        _plan_offer_text(offer_code=offer_code, cfg=cfg, amount=amount),
+        reply_markup=plan_offer_kb(
+            offer_code=offer_code,
+            card_amount=amount,
+            stars_amount=amount,
             discount=discount,
         ),
     )
@@ -1917,49 +2232,67 @@ async def wb_plan_cb(cb: CallbackQuery, session: AsyncSession) -> None:
 
 @router.callback_query(F.data == "wbm:pay:choice")
 async def wb_pay_choice_cb(cb: CallbackQuery, session: AsyncSession) -> None:
-    """Показать выбор способа оплаты."""
+    """Совместимость со старыми кнопками оплаты: открываем PRO карточку."""
+    offer_code = _PLAN_PRO_CODE
     user = await get_or_create_monitor_user(
-        session, cb.from_user.id, cb.from_user.username
+        session,
+        cb.from_user.id,
+        cb.from_user.username,
     )
+
     now = datetime.now(UTC).replace(tzinfo=None)
     discount = await get_user_active_discount(session, user_id=user.id, now=now)
-    
+    amount = _discounted_amount(_plan_base_amount(offer_code), discount)
+    cfg = runtime_config_view(await get_runtime_config(session))
+
+    await cb.answer()
     await cb.message.edit_text(
-        tx.PAYMENT_METHOD_CHOICE,
-        reply_markup=payment_choice_kb(discount),
+        _plan_offer_text(offer_code=offer_code, cfg=cfg, amount=amount),
+        reply_markup=plan_offer_kb(
+            offer_code=offer_code,
+            card_amount=amount,
+            stars_amount=amount,
+            discount=discount,
+        ),
     )
 
 
-@router.callback_query(F.data == "wbm:pay:card")
+@router.callback_query(F.data.regexp(r"wbm:pay:card(?::(pro|proplus))?$"))
 async def wb_pay_card_cb(cb: CallbackQuery, session: AsyncSession) -> None:
     """Оплата картой через Telegram Payments."""
     from aiogram.types import LabeledPrice
-    
+
+    parts = cb.data.split(":")
+    offer_code = _normalize_offer_code(parts[3] if len(parts) > 3 else None)
+
     if not se.provider_token:
         await cb.answer("❌ Оплата картой временно недоступна", show_alert=True)
         return
-    
+
     user = await get_or_create_monitor_user(
         session, cb.from_user.id, cb.from_user.username
     )
     now = datetime.now(UTC).replace(tzinfo=None)
     discount = await get_user_active_discount(session, user_id=user.id, now=now)
-    
-    # Сумма в рублях (или другой валюте провайдера)
-    amount_rub = (
-        max(1, int(round(150 * (100 - discount.percent) / 100))) if discount else 150
-    )
-    
+    days = _plan_days(offer_code)
+    amount_rub = _discounted_amount(_plan_base_amount(offer_code), discount)
+
     payload = _build_payment_payload(
+        offer_code=offer_code,
+        days=days,
         amount=amount_rub,
         discount_activation_id=(discount.activation_id if discount else None),
     )
-    
-    description = tx.PAYMENT_CARD_DESCRIPTION.format(amount=amount_rub)
-    label = f"Pro ({amount_rub}₽)"
-    
+
+    description = tx.PAYMENT_CARD_DESCRIPTION_BY_PLAN.format(
+        plan=_plan_title(offer_code),
+        days=days,
+        amount=amount_rub,
+    )
+    label = f"{_plan_title(offer_code)} ({days} дн.)"
+
     await cb.message.answer_invoice(
-        title=tx.PAYMENT_TITLE,
+        title=f"WB Monitor {_plan_title(offer_code)}",
         description=description,
         payload=payload,
         currency="RUB",
@@ -1968,29 +2301,37 @@ async def wb_pay_card_cb(cb: CallbackQuery, session: AsyncSession) -> None:
     )
 
 
-@router.callback_query(F.data == "wbm:pay:stars")
+@router.callback_query(F.data.regexp(r"wbm:pay:stars(?::(pro|proplus))?$"))
 async def wb_pay_stars_cb(cb: CallbackQuery, session: AsyncSession) -> None:
     from aiogram.types import LabeledPrice
+
+    parts = cb.data.split(":")
+    offer_code = _normalize_offer_code(parts[3] if len(parts) > 3 else None)
 
     user = await get_or_create_monitor_user(
         session, cb.from_user.id, cb.from_user.username
     )
     now = datetime.now(UTC).replace(tzinfo=None)
     discount = await get_user_active_discount(session, user_id=user.id, now=now)
-    amount = (
-        max(1, int(round(150 * (100 - discount.percent) / 100))) if discount else 150
-    )
+    days = _plan_days(offer_code)
+    amount = _discounted_amount(_plan_base_amount(offer_code), discount)
+
     payload = _build_payment_payload(
+        offer_code=offer_code,
+        days=days,
         amount=amount,
         discount_activation_id=(discount.activation_id if discount else None),
     )
-    label = tx.PAYMENT_LABEL
+    label = f"{_plan_title(offer_code)} ({days} дн.)"
     if discount:
         label = tx.BTN_PAY_PRO_DISCOUNT.format(amount=amount, percent=discount.percent)
 
     await cb.message.answer_invoice(
-        title=tx.PAYMENT_TITLE,
-        description=tx.PAYMENT_DESCRIPTION,
+        title=f"WB Monitor {_plan_title(offer_code)}",
+        description=tx.PAYMENT_STARS_DESCRIPTION_BY_PLAN.format(
+            plan=_plan_title(offer_code),
+            days=days,
+        ),
         payload=payload,
         currency="XTR",
         prices=[LabeledPrice(label=label, amount=amount)],
@@ -2008,6 +2349,13 @@ async def successful_payment_handler(
     msg: Message, session: AsyncSession, redis: "Redis"
 ) -> None:
     payment = msg.successful_payment
+    parsed_payload = _parse_payment_payload(payment.invoice_payload)
+    paid_days = parsed_payload[3] if parsed_payload is not None else 30
+    paid_offer_code = (
+        parsed_payload[2] if parsed_payload is not None else _PLAN_PRO_CODE
+    )
+    paid_plan = _plan_db_name_from_offer(paid_offer_code)
+
     cfg = runtime_config_view(await get_runtime_config(session))
     user = await get_or_create_monitor_user(
         session, msg.from_user.id, msg.from_user.username
@@ -2018,13 +2366,12 @@ async def successful_payment_handler(
         if user.pro_expires_at and user.pro_expires_at > now
         else now
     )
-    user.plan = "pro"
-    user.pro_expires_at = base_expiry + timedelta(days=30)
+    user.plan = paid_plan
+    user.pro_expires_at = base_expiry + timedelta(days=paid_days)
     await set_user_tracks_interval(session, user.id, cfg.pro_interval_min)
 
-    parsed_payload = _parse_payment_payload(payment.invoice_payload)
     if parsed_payload is not None:
-        discount_activation_id, _amount = parsed_payload
+        discount_activation_id, _amount, _offer_code, _days = parsed_payload
         if discount_activation_id > 0:
             await mark_discount_activation_consumed(
                 session,
@@ -2071,7 +2418,7 @@ async def successful_payment_handler(
     # Инвалидируем кэш текущего пользователя (план изменился)
     await MonitorUserRD.invalidate(redis, msg.from_user.id)
 
-    text = tx.PRO_ACTIVATED
+    text = tx.PRO_ACTIVATED_DAYS.format(days=paid_days)
     if referral_bonus_applied:
         text += tx.PRO_ACTIVATED_WITH_REFERRAL
     await msg.answer(text)
@@ -2847,7 +3194,6 @@ async def _hide_settings_prompt_keyboard(msg: Message, state: FSMContext) -> Non
         pass
 
 
-
 @router.callback_query(F.data.regexp(r"wbm:qty:(\d+)"))
 async def wb_settings_qty_cb(cb: CallbackQuery, session: AsyncSession) -> None:
     track_id = int(cb.data.split(":")[2])
@@ -2855,7 +3201,7 @@ async def wb_settings_qty_cb(cb: CallbackQuery, session: AsyncSession) -> None:
         session, cb.from_user.id, cb.from_user.username
     )
 
-    if user.plan != "pro":
+    if not _is_paid_plan(user.plan):
         await cb.answer(tx.SETTINGS_QTY_PRO_ONLY, show_alert=True)
         return
 
@@ -2914,7 +3260,7 @@ async def wb_settings_stock_cb(cb: CallbackQuery, session: AsyncSession) -> None
             reply_markup=settings_kb(
                 track_id,
                 has_sizes=bool(track.watch_sizes),
-                pro_plan=user.plan == "pro",
+                pro_plan=_is_paid_plan(user.plan),
                 qty_on=track.watch_qty,
                 stock_on=track.watch_stock,
                 price_fluctuation_on=track.watch_price_fluctuation,
@@ -2935,7 +3281,9 @@ async def wb_settings_stock_cb(cb: CallbackQuery, session: AsyncSession) -> None
 
 
 @router.callback_query(F.data.regexp(r"wbm:price_fluctuation:(\d+)"))
-async def wb_settings_price_fluctuation_cb(cb: CallbackQuery, session: AsyncSession) -> None:
+async def wb_settings_price_fluctuation_cb(
+    cb: CallbackQuery, session: AsyncSession
+) -> None:
     track_id = int(cb.data.split(":")[2])
     user = await get_or_create_monitor_user(
         session, cb.from_user.id, cb.from_user.username
@@ -2955,7 +3303,7 @@ async def wb_settings_price_fluctuation_cb(cb: CallbackQuery, session: AsyncSess
             reply_markup=settings_kb(
                 track_id,
                 has_sizes=bool(track.watch_sizes),
-                pro_plan=user.plan == "pro",
+                pro_plan=_is_paid_plan(user.plan),
                 qty_on=track.watch_qty,
                 stock_on=track.watch_stock,
                 price_fluctuation_on=track.watch_price_fluctuation,
@@ -3065,14 +3413,22 @@ async def wb_help_cb(cb: CallbackQuery, session: AsyncSession) -> None:
         session, cb.from_user.id, cb.from_user.username
     )
     is_admin_flag = is_admin(cb.from_user.id, se)
-    
+
     # Для админа показываем количество открытых тикетов
     if is_admin_flag:
         open_count = await count_open_tickets(session)
-        text = tx.HELP_TEXT_ADMIN.format(open_tickets=open_count) if hasattr(tx, 'HELP_TEXT_ADMIN') else tx.HELP_TEXT
+        text = (
+            tx.HELP_TEXT_ADMIN.format(open_tickets=open_count)
+            if hasattr(tx, "HELP_TEXT_ADMIN")
+            else tx.HELP_TEXT
+        )
     else:
-        text = tx.HELP_TEXT if hasattr(tx, 'HELP_TEXT') else "📨 Нажмите кнопку ниже, чтобы написать в поддержку."
-    
+        text = (
+            tx.HELP_TEXT
+            if hasattr(tx, "HELP_TEXT")
+            else "📨 Нажмите кнопку ниже, чтобы написать в поддержку."
+        )
+
     await cb.message.edit_text(
         text,
         reply_markup=support_kb(),
@@ -3107,13 +3463,13 @@ async def wb_support_text_msg(
     """Получить текст сообщения для тикета."""
     data = await state.get_data()
     photos = data.get("photos", [])
-    
+
     # Сохраняем текст
     await state.update_data(message_text=msg.text)
-    
+
     # Переходим в состояние подтверждения
     await state.set_state(SupportState.waiting_for_media_confirmation)
-    
+
     if photos:
         await msg.answer(
             tx.SUPPORT_MEDIA_ADDED.format(count=len(photos)),
@@ -3136,26 +3492,28 @@ async def wb_support_photo_msg(
     data = await state.get_data()
     photos = data.get("photos", [])
     message_text = data.get("message_text")
-    
+
     # Берем фото максимального качества (последнее в списке)
     photo = msg.photo[-1]
-    photos.append({
-        "file_id": photo.file_id,
-        "file_unique_id": photo.file_unique_id,
-        "width": photo.width,
-        "height": photo.height,
-        "file_size": photo.file_size,
-    })
-    
+    photos.append(
+        {
+            "file_id": photo.file_id,
+            "file_unique_id": photo.file_unique_id,
+            "width": photo.width,
+            "height": photo.height,
+            "file_size": photo.file_size,
+        }
+    )
+
     await state.update_data(photos=photos)
-    
+
     # Переходим в состояние подтверждения
     await state.set_state(SupportState.waiting_for_media_confirmation)
-    
+
     text = tx.SUPPORT_MEDIA_ADDED.format(count=len(photos))
     if message_text:
         text = f"📝 <b>Сообщение:</b>\n{message_text[:300]}{'...' if len(message_text) > 300 else ''}\n\n{text}"
-    
+
     await msg.answer(
         text,
         reply_markup=support_media_confirmation_kb(),
@@ -3186,16 +3544,16 @@ async def wb_support_send_cb(
     data = await state.get_data()
     photos = data.get("photos", [])
     message_text = data.get("message_text")
-    
+
     # Проверяем что есть что отправлять
     if not message_text and not photos:
         await cb.answer(tx.SUPPORT_NO_TEXT_NO_MEDIA, show_alert=True)
         return
-    
+
     user = await get_or_create_monitor_user(
         session, cb.from_user.id, cb.from_user.username
     )
-    
+
     # Создаём тикет
     ticket = await create_support_ticket(
         session,
@@ -3204,7 +3562,7 @@ async def wb_support_send_cb(
         username=cb.from_user.username,
         message=message_text or "(без текста, только фото)",
     )
-    
+
     # Сохраняем фото
     for photo_data in photos:
         await add_ticket_photo(
@@ -3216,20 +3574,22 @@ async def wb_support_send_cb(
             height=photo_data["height"],
             file_size=photo_data["file_size"],
         )
-    
+
     await state.clear()
     await cb.message.edit_text(tx.SUPPORT_SENT)
     await cb.message.answer(
         tx.SUPPORT_SENT,
         reply_markup=dashboard_kb(is_admin(cb.from_user.id, se)),
     )
-    
+
     # Уведомляем админов о новом тикете
     admin_ids = se.admin_ids_list or {se.developer_id}
     for admin_id in admin_ids:
         try:
-            username_display = f"@{ticket.username}" if ticket.username else f"ID:{ticket.tg_user_id}"
-            
+            username_display = (
+                f"@{ticket.username}" if ticket.username else f"ID:{ticket.tg_user_id}"
+            )
+
             # Отправляем уведомление с фото (media group или отдельно)
             if photos:
                 # Отправляем фото группой, если их несколько
@@ -3241,7 +3601,7 @@ async def wb_support_send_cb(
                     await bot.send_media_group(admin_id, media=media_group)
                 elif photos:
                     await bot.send_photo(admin_id, photo=photos[0]["file_id"])
-                
+
                 # Затем отправляем текст с информацией о тикете
                 await bot.send_message(
                     admin_id,
@@ -3267,7 +3627,7 @@ async def wb_support_send_cb(
                 )
         except Exception as e:
             logger.warning("Failed to notify admin %s about ticket: %s", admin_id, e)
-    
+
     # Отмечаем, что админы уведомлены
     ticket.admin_notified = True
     await session.commit()
@@ -3281,21 +3641,21 @@ async def wb_support_admin_reply_cb(
     if not is_admin(cb.from_user.id, se):
         await cb.answer(tx.NO_ACCESS, show_alert=True)
         return
-    
+
     ticket_id = int(cb.data.split(":")[4])
     ticket = await get_ticket_by_id(session, ticket_id)
-    
+
     if not ticket:
         await cb.answer("❌ Тикет не найден", show_alert=True)
         return
-    
+
     if ticket.status == "closed":
         await cb.answer("❌ Тикет уже закрыт", show_alert=True)
         return
-    
+
     await state.update_data(ticket_id=ticket_id, reply_to_user_id=ticket.tg_user_id)
     await state.set_state(SupportState.waiting_for_admin_reply)
-    
+
     await cb.message.answer(
         f"✍️ Ответ на тикет #{ticket_id}\n\n"
         f"👤 Пользователь: @{ticket.username or ticket.tg_user_id}\n"
@@ -3303,7 +3663,11 @@ async def wb_support_admin_reply_cb(
         f"Напишите ваш ответ:",
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text="❌ Отмена", callback_data=f"wbm:support:admin:cancel")]
+                [
+                    InlineKeyboardButton(
+                        text="❌ Отмена", callback_data=f"wbm:support:admin:cancel"
+                    )
+                ]
             ]
         ),
     )
@@ -3318,11 +3682,11 @@ async def wb_support_admin_reply_msg(
     data = await state.get_data()
     ticket_id = data.get("ticket_id")
     reply_to_user_id = data.get("reply_to_user_id")
-    
+
     if not ticket_id:
         await state.clear()
         return
-    
+
     # Сохраняем ответ
     ticket = await reply_to_ticket(
         session,
@@ -3330,9 +3694,9 @@ async def wb_support_admin_reply_msg(
         response=msg.text,
         responded_by_tg_id=msg.from_user.id,
     )
-    
+
     await state.clear()
-    
+
     if ticket:
         # Отправляем ответ пользователю
         try:
@@ -3342,24 +3706,22 @@ async def wb_support_admin_reply_msg(
             )
         except Exception as e:
             logger.warning("Failed to send reply to user %s: %s", reply_to_user_id, e)
-        
+
         await msg.answer(tx.SUPPORT_ADMIN_REPLY_SENT)
     else:
         await msg.answer("❌ Ошибка: тикет не найден")
 
 
 @router.callback_query(F.data.regexp(r"wbm:support:admin:close:(\d+)"))
-async def wb_support_admin_close_cb(
-    cb: CallbackQuery, session: AsyncSession
-) -> None:
+async def wb_support_admin_close_cb(cb: CallbackQuery, session: AsyncSession) -> None:
     """Админ закрыл тикет без ответа."""
     if not is_admin(cb.from_user.id, se):
         await cb.answer(tx.NO_ACCESS, show_alert=True)
         return
-    
+
     ticket_id = int(cb.data.split(":")[4])
     success = await close_ticket(session, ticket_id)
-    
+
     if success:
         await cb.answer(tx.SUPPORT_TICKET_CLOSED)
         await cb.message.edit_text(f"{cb.message.text}\n\n🔒 Тикет #{ticket_id} закрыт")

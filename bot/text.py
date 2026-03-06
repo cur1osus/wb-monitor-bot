@@ -13,12 +13,12 @@ NO_ACCESS = "❌ Нет доступа"
 SETTINGS_SUFFIX = "\n\n⚙️ Настройки:"
 
 FEATURE_LIMIT_CHEAP_REACHED = (
-    "Лимит поиска похожих товаров на сегодня исчерпан ({limit}). "
-    "Попробуйте завтра или обновитесь до PRO."
+    "Лимит поиска похожих товаров исчерпан ({limit} / {period}). "
+    "Попробуйте позже или обновитесь до PRO/PRO+."
 )
 FEATURE_LIMIT_REVIEWS_REACHED = (
-    "Лимит анализа отзывов на сегодня исчерпан ({limit}). "
-    "Попробуйте завтра или обновитесь до PRO."
+    "Лимит анализа отзывов исчерпан ({limit} / {period}). "
+    "Попробуйте позже или обновитесь до PRO/PRO+."
 )
 
 DASHBOARD_TEMPLATE = (
@@ -29,6 +29,7 @@ DASHBOARD_TEMPLATE = (
     "Интервал проверок: каждые <b>{interval} мин</b>"
 )
 PLAN_BADGE_PRO = "⭐ PRO"
+PLAN_BADGE_PRO_PLUS = "🚀 PRO+"
 PLAN_BADGE_FREE = "🆓 FREE"
 
 BTN_ADD_ITEM = "➕ Добавить товар"
@@ -59,6 +60,10 @@ BTN_PAY_STARS = "⭐ Оплатить звёздами"
 BTN_PAY_CARD = "💳 Оплатить картой"
 BTN_PAY_CARD_DISCOUNT = "💳 Оплатить {amount}₽ — скидка {percent}%"
 BTN_PAY_PRO_DISCOUNT = "⭐ Оплатить {amount} звёзд — скидка {percent}%"
+BTN_PAY_CARD_AMOUNT = "💳 Купить за {amount}₽"
+BTN_PAY_STARS_AMOUNT = "⭐ Купить за {amount} звёзд"
+BTN_PLAN_SELECT_PRO = "⭐ PRO"
+BTN_PLAN_SELECT_PRO_PLUS = "🚀 PRO+"
 BTN_SHARE_LINK = "📤 Поделиться ссылкой"
 BTN_ADMIN_DAYS_SELECTED = "✅ {days} дн"
 BTN_ADMIN_DAYS = "📊 {days} дн"
@@ -103,10 +108,7 @@ TRACK_ADDED_TEMPLATE = (
     "📦 В наличии: {in_stock}"
 )
 QUICK_ITEM_PREVIEW_TEMPLATE = (
-    "📦 {title}\n"
-    "💰 Цена: {price}\n"
-    "⭐ Рейтинг: {rating}\n"
-    "📦 В наличии: {in_stock}"
+    "📦 {title}\n💰 Цена: {price}\n⭐ Рейтинг: {rating}\n📦 В наличии: {in_stock}"
 )
 TRACK_ADDED_RATING_WITH_REVIEWS = "{rating} ({reviews} отзывов)"
 TRACK_ADDED_PRICE_UNKNOWN = "не указана"
@@ -130,8 +132,12 @@ FIND_CHEAPER_TO_LIST_BTN = "◀️ К товару"
 SEARCH_MODE_PROMPT = "Выбери режим поиска:"
 SEARCH_MODE_CHEAPER_BTN = "💸 Найти дешевле"
 SEARCH_MODE_SIMILAR_BTN = "🧩 Найти похожее (без цены)"
-FIND_CHEAPER_PROGRESS = "🔎 Ищу похожие товары дешевле для <b>{title}</b>... Это может занять до 1 минуты."
-FIND_SIMILAR_PROGRESS = "🔎 Ищу похожие товары для <b>{title}</b>... Это может занять до 1 минуты."
+FIND_CHEAPER_PROGRESS = (
+    "🔎 Ищу похожие товары дешевле для <b>{title}</b>... Это может занять до 1 минуты."
+)
+FIND_SIMILAR_PROGRESS = (
+    "🔎 Ищу похожие товары для <b>{title}</b>... Это может занять до 1 минуты."
+)
 FIND_CHEAPER_ANSWER = "Ищу варианты..."
 FIND_CHEAPER_PRICE_ERROR = "❌ Не удалось получить текущую цену товара."
 FIND_CHEAPER_EMPTY = (
@@ -151,13 +157,32 @@ REVIEWS_ANALYSIS_NO_REVIEWS = (
 )
 
 PLAN_TEXT = (
-    "💳 <b>Ваш тариф: {plan}</b>\n\n"
-    "📦 Треков: {used}/{limit}\n"
-    "⏱ Интервал проверок: {interval} мин\n\n"
+    "💳 <b>Текущий тариф: {plan}</b>\n\n"
+    "Лимиты тарифа:\n"
+    "• 📦 Треков: <b>{tracks_limit}</b> (используется {tracks_used})\n"
+    "• ⏱ Интервал проверок: <b>{interval} мин</b>\n"
+    "• 🔎 Поиск товаров {cheap_period}: <b>{cheap_limit}</b> ({cheap_used_label} {cheap_used})\n"
+    "• 🧠 Анализ отзывов {reviews_period}: <b>{reviews_limit}</b> ({reviews_used_label} {reviews_used})"
 )
-PLAN_PRO_UPSELL = (
-    "🚀 Обновитесь до <b>PRO</b> — 50 треков, проверка каждые {interval} мин!"
+PLAN_EXPIRES_LINE = "\n• 📅 Действует до: <b>{expires}</b>"
+PLAN_SELECT_PROMPT = "\n\nВыберите вариант подписки ниже:"
+PLAN_OFFER_TEXT = (
+    "💎 <b>{title}</b>\n\n"
+    "Условия:\n"
+    "• Срок: <b>{days} дней</b>\n"
+    "• 📦 Треков: <b>{tracks_limit}</b>\n"
+    "• ⏱ Интервал проверок: <b>{interval} мин</b>\n"
+    "• 🔎 Поиск товаров {cheap_period}: <b>{cheap_limit}</b>\n"
+    "• 🧠 Анализ отзывов {reviews_period}: <b>{reviews_limit}</b>\n\n"
+    "Стоимость:\n"
+    "• 💳 <b>{card_amount}₽</b>\n"
+    "• ⭐ <b>{stars_amount} звёзд</b>\n\n"
+    "{note}"
 )
+PLAN_OFFER_PRO_TITLE = "PRO"
+PLAN_OFFER_PRO_PLUS_TITLE = "PRO+"
+PLAN_OFFER_PRO_NOTE = "Подходит для помесячной оплаты."
+PLAN_OFFER_PRO_PLUS_NOTE = "Расширенные лимиты в месяц для активного использования."
 
 PAYMENT_TITLE = "WB Monitor Pro"
 PAYMENT_DESCRIPTION = "Доступ к Pro на 30 дней"
@@ -171,8 +196,11 @@ PAYMENT_METHOD_CHOICE = (
     "• Увеличенные лимиты AI"
 )
 PAYMENT_CARD_DESCRIPTION = "Pro на 30 дней — {amount}₽"
+PAYMENT_CARD_DESCRIPTION_BY_PLAN = "{plan} на {days} дней — {amount}₽"
+PAYMENT_STARS_DESCRIPTION_BY_PLAN = "{plan} на {days} дней"
 REFERRAL_REWARD_NOTIFY = "🎉 По рефералке начислено +7 дней Pro!"
 PRO_ACTIVATED = "✅ Pro активирован. Доступ продлен на 30 дней."
+PRO_ACTIVATED_DAYS = "✅ Подписка активирована. Доступ продлен на {days} дней."
 PRO_ACTIVATED_WITH_REFERRAL = "\n🎁 Реферальный бонус пригласившему (+7 дней) начислен."
 
 REFERRAL_TEXT = (
@@ -456,16 +484,24 @@ def review_insights_text(track_title: str, insights: "ReviewInsights") -> str:
     ]
 
     if pos_total == 0 and neg_total == 0:
-        lines.append("⚠️ Оценка может быть слабой: нет развернутых положительных и отрицательных отзывов.")
+        lines.append(
+            "⚠️ Оценка может быть слабой: нет развернутых положительных и отрицательных отзывов."
+        )
     elif pos_total == 0:
-        lines.append("⚠️ Оценка может быть слабой: нет развернутых положительных отзывов.")
+        lines.append(
+            "⚠️ Оценка может быть слабой: нет развернутых положительных отзывов."
+        )
     elif neg_total == 0:
-        lines.append("⚠️ Оценка может быть слабой: нет развернутых отрицательных отзывов.")
+        lines.append(
+            "⚠️ Оценка может быть слабой: нет развернутых отрицательных отзывов."
+        )
 
-    lines.extend([
-        "",
-        "✅ <b>Сильные качества:</b>",
-    ])
+    lines.extend(
+        [
+            "",
+            "✅ <b>Сильные качества:</b>",
+        ]
+    )
 
     if insights.strengths:
         max_strengths = min(5, max(1, pos_total))
@@ -566,7 +602,7 @@ def format_track_text(track: "TrackModel") -> str:
         sizes_line = f"📏 Размеры: {', '.join(track.watch_sizes)}\n"
 
     return (
-        f"📦 <b><a href=\"{track.url}\">{track.title}</a></b>\n"
+        f'📦 <b><a href="{track.url}">{track.title}</a></b>\n'
         f"<blockquote>Отслеживание цены и наличия товара</blockquote>\n\n"
         f"🔹 Артикул: <code>{track.wb_item_id}</code>\n"
         f"💰 Текущая цена: {current_price}\n"
@@ -634,7 +670,9 @@ SUPPORT_NO_TEXT_NO_MEDIA = (
     "⚠️ <b>Отправьте текст или фото</b>\n\n"
     "Для создания обращения нужно описание проблемы или хотя бы одно фото."
 )
-SUPPORT_CONFIRM_SEND = "✅ <b>Готово к отправке!</b>\n\nПроверьте всё и нажмите кнопку ниже."
+SUPPORT_CONFIRM_SEND = (
+    "✅ <b>Готово к отправке!</b>\n\nПроверьте всё и нажмите кнопку ниже."
+)
 BTN_SUPPORT_SEND = "✅ Отправить обращение"
 BTN_SUPPORT_ADD_MORE = "📎 Добавить ещё фото"
 BTN_SUPPORT_CANCEL = "❌ Отменить"
