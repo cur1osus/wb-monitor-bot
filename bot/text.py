@@ -36,6 +36,7 @@ BTN_ADD_ITEM = "➕ Добавить товар"
 BTN_MY_TRACKS = "📋 Мои товары"
 BTN_PLAN = "💳 Тариф"
 BTN_REFERRAL = "🤝 Реферал"
+BTN_COMPARE = "⚖️ Сравнить товары"
 BTN_HELP = "❓ Справка"
 BTN_ADMIN = "🛠 Админ панель"
 BTN_BACK_MENU = "◀️ В меню"
@@ -96,6 +97,14 @@ REFERRAL_SHARE_TEXT = "WB Monitor — отслеживай цены на Wildber
 ADD_ITEM_PROMPT = (
     "📎 Отправьте ссылку на товар Wildberries или его артикул (6-12 цифр)."
 )
+COMPARE_ITEMS_PROMPT = (
+    "⚖️ Отправьте от 2 до 5 ссылок/артикулов WB (каждый с новой строки).\n"
+    "Я сравню товары и выберу лучший вариант."
+)
+COMPARE_ITEMS_NOT_ENOUGH = "❌ Нужно минимум 2 валидных товара для сравнения."
+COMPARE_ITEMS_TOO_MANY = "❌ За раз можно сравнить максимум 5 товаров."
+COMPARE_ITEMS_PROGRESS = "⚖️ Сравниваю товары, это займет до 20 секунд..."
+COMPARE_ITEMS_FAILED = "❌ Не удалось сравнить товары. Попробуйте позже."
 WB_LINK_PARSE_ERROR = "❌ Не удалось распознать ссылку WB. Отправьте корректную ссылку."
 TRACK_ALREADY_EXISTS = "⚠️ Вы уже отслеживаете этот товар."
 TRACK_LIMIT_REACHED = "❌ Достигнут лимит треков ({limit}). Обновитесь до Pro!"

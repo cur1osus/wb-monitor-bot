@@ -97,6 +97,7 @@ from bot.services.review_analysis import (
     analyze_reviews_with_llm,
 )
 from bot.services.cheap_ai import rerank_similar_with_llm
+from bot.services.product_compare import compare_products_with_llm
 from bot.services.utils import is_admin
 from bot.services.wb_client import (
     extract_wb_item_id,
@@ -686,6 +687,7 @@ async def _search_wb_loose_alternatives(
 class SettingsState(StatesGroup):
     waiting_for_targets = State()
     waiting_for_sizes = State()
+    waiting_for_compare_items = State()
     waiting_for_pro_grant = State()
     waiting_for_free_interval = State()
     waiting_for_pro_interval = State()
@@ -731,6 +733,15 @@ async def wb_noop_cb(cb: CallbackQuery) -> None:
 async def wb_add_cb(cb: CallbackQuery) -> None:
     await cb.message.edit_text(
         tx.ADD_ITEM_PROMPT,
+        reply_markup=add_item_prompt_kb(),
+    )
+
+
+@router.callback_query(F.data == "wbm:compare:0")
+async def wb_compare_cb(cb: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(SettingsState.waiting_for_compare_items)
+    await cb.message.edit_text(
+        tx.COMPARE_ITEMS_PROMPT,
         reply_markup=add_item_prompt_kb(),
     )
 
@@ -862,6 +873,86 @@ def _quick_search_mode_kb(wb_item_id: int) -> InlineKeyboardMarkup:
             ],
         ]
     )
+
+
+@router.message(SettingsState.waiting_for_compare_items, F.text)
+async def wb_compare_from_text(
+    msg: Message,
+    session: AsyncSession,
+    redis: "Redis",
+    state: FSMContext,
+) -> None:
+    raw_parts = [p.strip() for p in re.split(r"[\n,;\t ]+", msg.text or "") if p.strip()]
+    wb_ids: list[int] = []
+    for part in raw_parts:
+        nm_id = extract_wb_item_id(part)
+        if not nm_id:
+            continue
+        if nm_id in wb_ids:
+            continue
+        wb_ids.append(nm_id)
+
+    if len(wb_ids) > 5:
+        await msg.answer(tx.COMPARE_ITEMS_TOO_MANY)
+        return
+
+    if len(wb_ids) < 2:
+        await msg.answer(tx.COMPARE_ITEMS_NOT_ENOUGH)
+        return
+
+    await msg.answer(tx.COMPARE_ITEMS_PROGRESS)
+
+    products = []
+    for nm_id in wb_ids:
+        product = await fetch_product(redis, nm_id, use_cache=False)
+        if product:
+            products.append(product)
+
+    if len(products) < 2:
+        await msg.answer(tx.COMPARE_ITEMS_NOT_ENOUGH)
+        return
+
+    try:
+        result = await compare_products_with_llm(
+            products=products,
+            api_key=se.agentplatform_api_key,
+            model=se.agentplatform_model,
+            api_base_url=se.agentplatform_base_url,
+        )
+    except Exception:
+        logger.exception("Compare products failed")
+        await msg.answer(tx.COMPARE_ITEMS_FAILED)
+        return
+
+    by_id = {p.wb_item_id: p for p in products}
+    winner = by_id.get(result.winner_id)
+    ranking_lines: list[str] = []
+    for idx, nm_id in enumerate(result.ranking[:5], start=1):
+        p = by_id.get(nm_id)
+        if not p:
+            continue
+        price = f"{p.price}₽" if p.price is not None else "—"
+        rating = f"{p.rating}" if p.rating is not None else "—"
+        ranking_lines.append(
+            f"{idx}. <a href='https://www.wildberries.ru/catalog/{nm_id}/detail.aspx'>{escape(p.title)}</a> — {price}, ⭐ {rating}"
+        )
+
+    if not winner:
+        winner = products[0]
+
+    winner_price = f"{winner.price}₽" if winner.price is not None else "—"
+    winner_rating = f"{winner.rating}" if winner.rating is not None else "—"
+    text = (
+        "⚖️ <b>Сравнение товаров</b>\n\n"
+        f"🏆 <b>Лучший выбор:</b> <a href='https://www.wildberries.ru/catalog/{winner.wb_item_id}/detail.aspx'>{escape(winner.title)}</a>\n"
+        f"💰 Цена: <b>{winner_price}</b>\n"
+        f"⭐ Рейтинг: <b>{winner_rating}</b>\n"
+        f"📌 Почему: {escape(result.reason)}\n\n"
+        "<b>Рейтинг кандидатов:</b>\n"
+        + "\n".join(ranking_lines)
+    )
+    await state.clear()
+    await msg.answer(text, link_preview_options=LinkPreviewOptions(is_disabled=True))
 
 
 @router.message(
