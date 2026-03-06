@@ -14,6 +14,32 @@ logger = logging.getLogger(__name__)
 
 _COMPARE_MODES = {"cheap", "quality", "gift", "safe", "balanced"}
 
+
+def _mode_prompt(mode: str) -> str:
+    prompts = {
+        "cheap": (
+            "Приоритет — минимальная цена при приемлемом качестве. "
+            "Если разница в качестве несущественная, выбирай более дешевый вариант."
+        ),
+        "quality": (
+            "Приоритет — качество и надежность. "
+            "Ориентируйся на рейтинг, стабильность отзывов, низкий риск и репутацию."
+        ),
+        "gift": (
+            "Приоритет — товар, который не стыдно подарить: "
+            "стабильное качество, низкий риск негатива, хорошая презентабельность и наличие. "
+            "Не выбирай только из-за самой низкой цены."
+        ),
+        "safe": (
+            "Приоритет — минимальный риск неудачной покупки: "
+            "надежные отзывы, меньше критичных жалоб, предсказуемое качество и наличие."
+        ),
+        "balanced": (
+            "Сбалансируй цену, качество, риск и наличие без перекоса в один фактор."
+        ),
+    }
+    return prompts.get(mode, prompts["balanced"])
+
 _CRIT_RE = re.compile(
     r"брак|слом|трещ|плох|ужас|возврат|не рекоменд|отвал|разочар|small|маломер|большемер",
     re.IGNORECASE,
@@ -66,8 +92,11 @@ async def compare_products_with_llm(
         return det
 
     endpoint = _chat_completions_url(api_base_url)
+    mode_prompt = _mode_prompt(mode)
+
     payload = {
         "mode": mode,
+        "mode_instruction": mode_prompt,
         "scoring_facts": [
             {
                 "id": s.wb_item_id,
@@ -109,7 +138,13 @@ async def compare_products_with_llm(
         "temperature": 0.1,
         "response_format": {"type": "json_object"},
         "messages": [
-            {"role": "system", "content": "Ты аналитик WB. Отвечай строго JSON без markdown."},
+            {
+                "role": "system",
+                "content": (
+                    "Ты аналитик WB. Отвечай строго JSON без markdown. "
+                    f"Режим сравнения: {mode}. {mode_prompt}"
+                ),
+            },
             {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
         ],
     }
