@@ -983,11 +983,7 @@ async def wb_compare_from_text(
 
     score_block = ""
     if winner_score:
-        score_block = (
-            f"📊 <b>Оценки:</b> итог {winner_score.overall}/100 | "
-            f"цена/ценность {winner_score.value} | надежность {winner_score.trust} | "
-            f"риск {winner_score.risk} | наличие {winner_score.availability}\n"
-        )
+        score_block = f"📊 <b>Итоговая оценка:</b> {winner_score.overall}/100\n"
 
     def _replace_ids_with_titles(src: str) -> str:
         out = src
@@ -995,15 +991,36 @@ async def wb_compare_from_text(
             out = re.sub(rf"\b{p.wb_item_id}\b", f"«{p.title}»", out)
         return out
 
-    clean_reason = _replace_ids_with_titles(result.reason)
-    clean_risks = [_replace_ids_with_titles(r) for r in (result.risks or [])]
-    clean_wait_tip = _replace_ids_with_titles(result.wait_tip) if result.wait_tip else None
+    def _humanize_text(src: str) -> str:
+        out = src
+        replacements = {
+            "overall": "итоговая оценка",
+            "score": "оценка",
+            "target_price": "ориентир по цене",
+            "risk": "риск",
+            "trust": "надежность",
+            "availability": "наличие",
+            "value": "ценность",
+        }
+        for en, ru in replacements.items():
+            out = re.sub(rf"\b{en}\b", ru, out, flags=re.IGNORECASE)
+        return out
+
+    clean_reason = _humanize_text(_replace_ids_with_titles(result.reason))
+    clean_risks = [_humanize_text(_replace_ids_with_titles(r)) for r in (result.risks or [])]
+    clean_wait_tip = (
+        _humanize_text(_replace_ids_with_titles(result.wait_tip)) if result.wait_tip else None
+    )
 
     risks_block = ""
     if clean_risks:
         risks_block = "\n" + "\n".join([f"• {escape(r)}" for r in clean_risks[:3]])
 
-    wait_tip_block = f"\n⏳ {escape(clean_wait_tip)}" if clean_wait_tip else ""
+    wait_tip_block = ""
+    if clean_wait_tip:
+        normalized_wait = clean_wait_tip.strip().lower()
+        if normalized_wait not in {"нет", "no", "none", "n/a", "-", "—"}:
+            wait_tip_block = f"\n💡 <b>Рекомендация по цене:</b> {escape(clean_wait_tip)}"
 
     text = (
         "⚖️ <b>Сравнение товаров</b>\n\n"
