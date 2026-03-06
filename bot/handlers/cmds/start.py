@@ -158,7 +158,10 @@ async def start_cmd(
             free_interval_min=cfg.free_interval_min,
             pro_interval_min=cfg.pro_interval_min,
         ),
-        reply_markup=dashboard_kb(admin),
+        reply_markup=dashboard_kb(
+            admin,
+            show_compare=admin or user.plan in {"pro", "pro_plus"},
+        ),
     )
 
     if referred:

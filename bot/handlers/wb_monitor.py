@@ -143,6 +143,7 @@ _FEATURE_LIMITS: dict[str, dict[str, int]] = {
     _PLAN_DB_PRO: {"cheap": 300, "reviews": 180},
     _PLAN_DB_PRO_PLUS: {"cheap": 600, "reviews": 360},
 }
+_COMPARE_DAILY_LIMIT = 2
 
 _COLOR_ALIASES: dict[str, set[str]] = {
     "black": {"черн", "black"},
@@ -371,6 +372,10 @@ def _track_limit(plan: str) -> int:
     if plan == _PLAN_DB_PRO:
         return 50
     return 5
+
+
+def _can_use_compare(*, plan: str, admin: bool) -> bool:
+    return admin or plan in _PAID_PLANS
 
 
 def _has_active_subscription(user: object, *, now: datetime) -> bool:
@@ -715,6 +720,7 @@ async def wb_home_cb(cb: CallbackQuery, session: AsyncSession, redis: "Redis") -
     )
     used = await count_user_tracks(session, user.id, active_only=True)
     cfg = runtime_config_view(await get_runtime_config(session))
+    admin = is_admin(cb.from_user.id, se)
     await cb.message.edit_text(
         dashboard_text(
             user.plan,
@@ -722,7 +728,10 @@ async def wb_home_cb(cb: CallbackQuery, session: AsyncSession, redis: "Redis") -
             free_interval_min=cfg.free_interval_min,
             pro_interval_min=cfg.pro_interval_min,
         ),
-        reply_markup=dashboard_kb(is_admin(cb.from_user.id, se)),
+        reply_markup=dashboard_kb(
+            admin,
+            show_compare=_can_use_compare(plan=user.plan, admin=admin),
+        ),
     )
 
 
@@ -752,13 +761,41 @@ def _compare_mode_kb() -> InlineKeyboardMarkup:
 
 
 @router.callback_query(F.data == "wbm:compare:0")
-async def wb_compare_cb(cb: CallbackQuery, state: FSMContext) -> None:
+async def wb_compare_cb(cb: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    user = await get_or_create_monitor_user(
+        session,
+        cb.from_user.id,
+        cb.from_user.username,
+        cb.from_user.first_name,
+        cb.from_user.last_name,
+    )
+    admin = is_admin(cb.from_user.id, se)
+    if not _can_use_compare(plan=user.plan, admin=admin):
+        await cb.answer(tx.COMPARE_ACCESS_DENIED, show_alert=True)
+        return
+
     await state.clear()
     await cb.message.edit_text(tx.COMPARE_MODE_PROMPT, reply_markup=_compare_mode_kb())
 
 
 @router.callback_query(F.data.regexp(r"wbm:compare:mode:(cheap|quality|gift|safe)"))
-async def wb_compare_mode_cb(cb: CallbackQuery, state: FSMContext) -> None:
+async def wb_compare_mode_cb(
+    cb: CallbackQuery,
+    state: FSMContext,
+    session: AsyncSession,
+) -> None:
+    user = await get_or_create_monitor_user(
+        session,
+        cb.from_user.id,
+        cb.from_user.username,
+        cb.from_user.first_name,
+        cb.from_user.last_name,
+    )
+    admin = is_admin(cb.from_user.id, se)
+    if not _can_use_compare(plan=user.plan, admin=admin):
+        await cb.answer(tx.COMPARE_ACCESS_DENIED, show_alert=True)
+        return
+
     mode = cb.data.split(":")[-1]
     await state.update_data(compare_mode=mode)
     await state.set_state(SettingsState.waiting_for_compare_items)
@@ -919,6 +956,29 @@ async def wb_compare_from_text(
         await msg.answer(tx.COMPARE_ITEMS_NOT_ENOUGH)
         return
 
+    user = await get_or_create_monitor_user(
+        session,
+        msg.from_user.id,
+        msg.from_user.username,
+        msg.from_user.first_name,
+        msg.from_user.last_name,
+        redis=redis,
+    )
+    admin = is_admin(msg.from_user.id, se)
+
+    # Check daily limit for non-admins
+    if not admin:
+        ok, _ = await FeatureUsageDailyRD.try_consume(
+            redis,
+            tg_user_id=user.tg_user_id,
+            feature="compare",
+            limit=_COMPARE_DAILY_LIMIT,
+            period="day",
+        )
+        if not ok:
+            await msg.answer(tx.COMPARE_LIMIT_REACHED)
+            return
+
     await msg.answer(tx.COMPARE_ITEMS_PROGRESS)
 
     products = []
@@ -955,6 +1015,18 @@ async def wb_compare_from_text(
         )
     except Exception:
         logger.exception("Compare products failed")
+        # Refund the limit on error for non-admins
+        if not admin:
+            try:
+                await FeatureUsageDailyRD.try_consume(
+                    redis,
+                    tg_user_id=user.tg_user_id,
+                    feature="compare",
+                    limit=9999,
+                    period="day",
+                )
+            except Exception:
+                pass
         await msg.answer(tx.COMPARE_ITEMS_FAILED)
         return
 
@@ -1861,6 +1933,7 @@ async def wb_remove_yes_cb(
 
     cfg = runtime_config_view(await get_runtime_config(session))
     used = await count_user_tracks(session, user.id, active_only=True)
+    admin = is_admin(cb.from_user.id, se)
     await cb.message.edit_text(
         dashboard_text(
             user.plan,
@@ -1868,7 +1941,10 @@ async def wb_remove_yes_cb(
             free_interval_min=cfg.free_interval_min,
             pro_interval_min=cfg.pro_interval_min,
         ),
-        reply_markup=dashboard_kb(is_admin(cb.from_user.id, se)),
+        reply_markup=dashboard_kb(
+            admin,
+            show_compare=_can_use_compare(plan=user.plan, admin=admin),
+        ),
     )
     await cb.answer(tx.TRACK_DELETED)
 
@@ -3437,6 +3513,7 @@ async def wb_cancel_cb(
     )
     cfg = runtime_config_view(await get_runtime_config(session))
     used = await count_user_tracks(session, user.id, active_only=True)
+    admin = is_admin(cb.from_user.id, se)
     await cb.message.edit_text(
         dashboard_text(
             user.plan,
@@ -3444,7 +3521,10 @@ async def wb_cancel_cb(
             free_interval_min=cfg.free_interval_min,
             pro_interval_min=cfg.pro_interval_min,
         ),
-        reply_markup=dashboard_kb(is_admin(cb.from_user.id, se)),
+        reply_markup=dashboard_kb(
+            admin,
+            show_compare=_can_use_compare(plan=user.plan, admin=admin),
+        ),
     )
 
 
@@ -3873,9 +3953,13 @@ async def wb_support_send_cb(
 
     await state.clear()
     await cb.message.edit_text(tx.SUPPORT_SENT)
+    admin = is_admin(cb.from_user.id, se)
     await cb.message.answer(
         tx.SUPPORT_SENT,
-        reply_markup=dashboard_kb(is_admin(cb.from_user.id, se)),
+        reply_markup=dashboard_kb(
+            admin,
+            show_compare=_can_use_compare(plan=user.plan, admin=admin),
+        ),
     )
 
     # Уведомляем админов о новом тикете

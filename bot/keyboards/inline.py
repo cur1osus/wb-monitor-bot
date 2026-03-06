@@ -68,7 +68,7 @@ def dashboard_text(
     )
 
 
-def dashboard_kb(is_admin: bool) -> InlineKeyboardMarkup:
+def dashboard_kb(is_admin: bool, *, show_compare: bool = True) -> InlineKeyboardMarkup:
     rows = [
         [
             # primary — синий (главное действие)
@@ -80,12 +80,12 @@ def dashboard_kb(is_admin: bool) -> InlineKeyboardMarkup:
             _btn(tx.BTN_REFERRAL, "wbm:ref:0"),
         ],
         [
-            _btn(tx.BTN_COMPARE, "wbm:compare:0"),
-        ],
-        [
             _btn(tx.BTN_SUPPORT, "wbm:help:0"),
         ],
     ]
+    if show_compare:
+        rows.insert(2, [_btn(tx.BTN_COMPARE, "wbm:compare:0")])
+
     if is_admin:
         rows.append([_btn(tx.BTN_ADMIN, "wbm:admin:0")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
