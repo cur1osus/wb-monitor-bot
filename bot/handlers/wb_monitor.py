@@ -989,11 +989,21 @@ async def wb_compare_from_text(
             f"риск {winner_score.risk} | наличие {winner_score.availability}\n"
         )
 
-    risks_block = ""
-    if result.risks:
-        risks_block = "\n" + "\n".join([f"• {escape(r)}" for r in result.risks[:3]])
+    def _replace_ids_with_titles(src: str) -> str:
+        out = src
+        for p in products:
+            out = re.sub(rf"\b{p.wb_item_id}\b", f"«{p.title}»", out)
+        return out
 
-    wait_tip_block = f"\n⏳ {escape(result.wait_tip)}" if result.wait_tip else ""
+    clean_reason = _replace_ids_with_titles(result.reason)
+    clean_risks = [_replace_ids_with_titles(r) for r in (result.risks or [])]
+    clean_wait_tip = _replace_ids_with_titles(result.wait_tip) if result.wait_tip else None
+
+    risks_block = ""
+    if clean_risks:
+        risks_block = "\n" + "\n".join([f"• {escape(r)}" for r in clean_risks[:3]])
+
+    wait_tip_block = f"\n⏳ {escape(clean_wait_tip)}" if clean_wait_tip else ""
 
     text = (
         "⚖️ <b>Сравнение товаров</b>\n\n"
@@ -1001,7 +1011,7 @@ async def wb_compare_from_text(
         f"💰 Цена: <b>{winner_price}</b>\n"
         f"⭐ Рейтинг: <b>{winner_rating}</b>\n"
         f"{score_block}"
-        f"📌 Почему: {escape(result.reason)}\n"
+        f"📌 Почему: {escape(clean_reason)}\n"
         f"⚠️ <b>Риски:</b>{risks_block}"
         f"{wait_tip_block}\n\n"
         "<b>Рейтинг кандидатов:</b>\n"

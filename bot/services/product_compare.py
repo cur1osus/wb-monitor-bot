@@ -98,6 +98,8 @@ async def compare_products_with_llm(
         ],
         "task": (
             "Выбери лучший товар в зависимости от режима. Используй только факты. "
+            "Пиши простым русским языком для покупателя: без id, без названий полей, без JSON-вставок в тексте. "
+            "В risks верни только список коротких строк. "
             "Верни JSON: {winner_id, ranking, reason, risks:[..], wait_tip}."
         ),
     }
@@ -401,7 +403,26 @@ def _parse_compare_result(payload: object) -> _ParsedCompare | None:
                 continue
 
     reason = str(obj.get("reason") or "").strip()[:700]
-    risks = [str(x)[:180] for x in (obj.get("risks") or []) if str(x).strip()][:5]
+    risks: list[str] = []
+    raw_risks = obj.get("risks") or []
+    if isinstance(raw_risks, list):
+        for item in raw_risks:
+            if isinstance(item, str):
+                text = item.strip()
+                if text:
+                    risks.append(text[:180])
+            elif isinstance(item, dict):
+                text = str(
+                    item.get("risk_description")
+                    or item.get("description")
+                    or item.get("text")
+                    or ""
+                ).strip()
+                if text:
+                    risks.append(text[:180])
+            if len(risks) >= 5:
+                break
+
     wait_tip = str(obj.get("wait_tip") or "").strip()[:220] or None
 
     return _ParsedCompare(
