@@ -62,6 +62,8 @@ class MonitorUserRD(_RDBase):
 
     tg_user_id: int
     username: str | None = None
+    first_name: str | None = None
+    last_name: str | None = None
     plan: str = "free"
     pro_expires_at: str | None = None  # ISO-формат datetime
     referral_code: str | None = None
@@ -73,6 +75,8 @@ class MonitorUserRD(_RDBase):
         return cls(
             tg_user_id=m.tg_user_id,
             username=m.username,
+            first_name=m.first_name,
+            last_name=m.last_name,
             plan=m.plan,
             pro_expires_at=m.pro_expires_at.isoformat() if m.pro_expires_at else None,
             referral_code=m.referral_code,

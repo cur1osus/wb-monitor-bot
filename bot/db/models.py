@@ -26,6 +26,8 @@ class MonitorUserModel(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     tg_user_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
     username: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    first_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    last_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     plan: Mapped[str] = mapped_column(String(16), default="free")
     pro_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     referral_code: Mapped[str | None] = mapped_column(

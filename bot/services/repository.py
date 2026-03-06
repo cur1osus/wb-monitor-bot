@@ -88,10 +88,15 @@ async def _ensure_referral_code(session: AsyncSession, user: MonitorUserModel) -
             return
 
 
+_UNSET = object()
+
+
 async def get_or_create_monitor_user(
     session: AsyncSession,
     tg_user_id: int,
     username: str | None,
+    first_name: str | None | object = _UNSET,
+    last_name: str | None | object = _UNSET,
     redis: "Redis | None" = None,
 ) -> MonitorUserModel:
     """Получить или создать пользователя. При изменении — инвалидирует Redis-кэш."""
@@ -100,10 +105,19 @@ async def get_or_create_monitor_user(
     )
     if user:
         user.username = username
+        if first_name is not _UNSET:
+            user.first_name = first_name  # type: ignore[assignment]
+        if last_name is not _UNSET:
+            user.last_name = last_name  # type: ignore[assignment]
         await _ensure_referral_code(session, user)
         return user
 
-    user = MonitorUserModel(tg_user_id=tg_user_id, username=username)
+    user = MonitorUserModel(
+        tg_user_id=tg_user_id,
+        username=username,
+        first_name=None if first_name is _UNSET else first_name,
+        last_name=None if last_name is _UNSET else last_name,
+    )
     session.add(user)
     await session.flush()
     await _ensure_referral_code(session, user)

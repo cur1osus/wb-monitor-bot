@@ -84,7 +84,12 @@ async def start_cmd(
     promo_code = _extract_promo_code(message.text)
 
     user = await get_or_create_monitor_user(
-        session, message.from_user.id, message.from_user.username, redis=redis
+        session,
+        message.from_user.id,
+        message.from_user.username,
+        message.from_user.first_name,
+        message.from_user.last_name,
+        redis=redis,
     )
     referred = False
     if ref_code:
