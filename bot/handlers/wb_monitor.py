@@ -972,7 +972,7 @@ async def wb_compare_from_text(
         rating = f"{p.rating}" if p.rating is not None else "—"
         extra = ""
         if s:
-            extra = f" | score {s.overall}/100"
+            extra = f" | оценка {s.overall}/100"
         ranking_lines.append(
             f"{idx}. <a href='https://www.wildberries.ru/catalog/{nm_id}/detail.aspx'>{escape(p.title)}</a> — {price}, ⭐ {rating}{extra}"
         )
@@ -984,9 +984,9 @@ async def wb_compare_from_text(
     score_block = ""
     if winner_score:
         score_block = (
-            f"📊 <b>Score:</b> overall {winner_score.overall}/100 | "
-            f"value {winner_score.value} | trust {winner_score.trust} | "
-            f"risk {winner_score.risk} | availability {winner_score.availability}\n"
+            f"📊 <b>Оценки:</b> итог {winner_score.overall}/100 | "
+            f"цена/ценность {winner_score.value} | надежность {winner_score.trust} | "
+            f"риск {winner_score.risk} | наличие {winner_score.availability}\n"
         )
 
     risks_block = ""
