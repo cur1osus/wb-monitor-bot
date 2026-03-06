@@ -240,7 +240,8 @@ ADMIN_STATS_TEXT = (
     "🔁 Проверок: <b>{checks_count}</b>\n"
     "🔔 Уведомлений: <b>{alerts_count}</b>\n"
     "🔎 Поисков дешевле: <b>{cheap_scans_count}</b>\n"
-    "🧠 Анализов отзывов: <b>{reviews_scans_count}</b>"
+    "🧠 Анализов отзывов: <b>{reviews_scans_count}</b>\n"
+    "⚖️ Сравнений товаров: <b>{compare_runs_count}</b>"
 )
 
 ADMIN_RUNTIME_CONFIG_TEXT = (
@@ -564,6 +565,7 @@ def admin_stats_text(stats: object) -> str:
         alerts_count=getattr(stats, "alerts_count"),
         cheap_scans_count=getattr(stats, "cheap_scans_count", 0),
         reviews_scans_count=getattr(stats, "reviews_scans_count", 0),
+        compare_runs_count=getattr(stats, "compare_runs_count", 0),
     )
 
 

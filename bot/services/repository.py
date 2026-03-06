@@ -49,6 +49,7 @@ class AdminStats:
     alerts_count: int
     cheap_scans_count: int
     reviews_scans_count: int
+    compare_runs_count: int
 
 
 @dataclass(slots=True)
@@ -773,6 +774,14 @@ async def get_admin_stats(session: AsyncSession, *, days: int) -> AdminStats:
         )
         or 0
     )
+    compare_runs_count = int(
+        await session.scalar(
+            select(func.count(CompareRunModel.id)).where(
+                CompareRunModel.created_at >= since,
+            )
+        )
+        or 0
+    )
 
     return AdminStats(
         days=days,
@@ -786,6 +795,7 @@ async def get_admin_stats(session: AsyncSession, *, days: int) -> AdminStats:
         alerts_count=alerts_count,
         cheap_scans_count=cheap_scans_count,
         reviews_scans_count=reviews_scans_count,
+        compare_runs_count=compare_runs_count,
     )
 
 
