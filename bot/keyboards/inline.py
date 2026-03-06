@@ -16,7 +16,13 @@ from urllib.parse import quote, urlencode
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from bot.db.models import TrackModel
-from bot.services.config import FREE_INTERVAL, FREE_LIMIT, PRO_INTERVAL, PRO_LIMIT
+from bot.services.config import (
+    FREE_INTERVAL,
+    FREE_LIMIT,
+    PRO_INTERVAL,
+    PRO_LIMIT,
+    PRO_PLUS_LIMIT,
+)
 from bot import text as tx
 
 
@@ -42,14 +48,17 @@ def dashboard_text(
     free_interval_min: int = FREE_INTERVAL,
     pro_interval_min: int = PRO_INTERVAL,
 ) -> str:
-    is_paid = plan in {"pro", "pro_plus"}
-    limit = PRO_LIMIT if is_paid else FREE_LIMIT
-    interval = pro_interval_min if is_paid else free_interval_min
     if plan == "pro_plus":
+        limit = PRO_PLUS_LIMIT
+        interval = pro_interval_min
         plan_badge = tx.PLAN_BADGE_PRO_PLUS
     elif plan == "pro":
+        limit = PRO_LIMIT
+        interval = pro_interval_min
         plan_badge = tx.PLAN_BADGE_PRO
     else:
+        limit = FREE_LIMIT
+        interval = free_interval_min
         plan_badge = tx.PLAN_BADGE_FREE
     return tx.dashboard_text(
         plan_badge=plan_badge,

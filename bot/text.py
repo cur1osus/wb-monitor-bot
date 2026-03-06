@@ -161,8 +161,8 @@ PLAN_TEXT = (
     "Лимиты тарифа:\n"
     "• 📦 Треков: <b>{tracks_limit}</b> (используется {tracks_used})\n"
     "• ⏱ Интервал проверок: <b>{interval} мин</b>\n"
-    "• 🔎 Поиск товаров {cheap_period}: <b>{cheap_limit}</b> (осталось {cheap_left})\n"
-    "• 🧠 Анализ отзывов {reviews_period}: <b>{reviews_limit}</b> (осталось {reviews_left})"
+    "• 🔎 Поиск товаров осталось: {cheap_left})\n"
+    "• 🧠 Анализ отзывов осталось: {reviews_left})"
 )
 PLAN_EXPIRES_LINE = "\n• 📅 Действует до: <b>{expires}</b>"
 PLAN_SELECT_PROMPT = "\n\nВыберите вариант подписки ниже:"

@@ -362,6 +362,14 @@ def _feature_limit(plan: str, feature: str) -> int:
     return int(limits.get(feature, 0))
 
 
+def _track_limit(plan: str) -> int:
+    if plan == _PLAN_DB_PRO_PLUS:
+        return 100
+    if plan == _PLAN_DB_PRO:
+        return 50
+    return 5
+
+
 def _has_active_subscription(user: object, *, now: datetime) -> bool:
     plan = str(getattr(user, "plan", "free"))
     if not _is_paid_plan(plan):
@@ -523,7 +531,7 @@ def _plan_offer_text(
     return tx.PLAN_OFFER_TEXT.format(
         title=_plan_title(offer_code),
         days=_plan_days(offer_code),
-        tracks_limit=50,
+        tracks_limit=_track_limit(plan_name),
         interval=cfg.pro_interval_min,
         cheap_period=_feature_period_phrase(period),
         reviews_period=_feature_period_phrase(period),
@@ -906,7 +914,7 @@ async def wb_quick_add_cb(
         return
 
     track_count = await count_user_tracks(session, user.id, active_only=True)
-    limit = 50 if _is_paid_plan(user.plan) else 5
+    limit = _track_limit(user.plan)
     if track_count >= limit:
         await cb.answer(tx.TRACK_LIMIT_REACHED.format(limit=limit), show_alert=True)
         return
@@ -2158,7 +2166,7 @@ async def wb_plan_cb(
     has_active_subscription = _has_active_subscription(user, now=now)
     cfg = runtime_config_view(await get_runtime_config(session))
     tracks_used = await count_user_tracks(session, user.id, active_only=True)
-    tracks_limit = 50 if _is_paid_plan(user.plan) else 5
+    tracks_limit = _track_limit(user.plan)
     interval = (
         cfg.pro_interval_min if _is_paid_plan(user.plan) else cfg.free_interval_min
     )
