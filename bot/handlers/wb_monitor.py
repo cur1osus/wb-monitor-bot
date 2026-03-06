@@ -949,7 +949,7 @@ async def wb_compare_from_text(
             products=products,
             mode=compare_mode,
             api_key=se.agentplatform_api_key,
-            model=se.agentplatform_model,
+            model=se.agentplatform_compare_model,
             api_base_url=se.agentplatform_base_url,
             price_history=history,
         )

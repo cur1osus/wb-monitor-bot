@@ -33,6 +33,10 @@ class Settings:
     dev: bool = os.environ.get("DEV", "false").lower() == "true"
     agentplatform_api_key: str = os.environ.get("AGENTPLATFORM_API_KEY", "")
     agentplatform_model: str = os.environ.get("AGENTPLATFORM_MODEL", "qwen/qwen3-32b")
+    agentplatform_compare_model: str = os.environ.get(
+        "AGENTPLATFORM_COMPARE_MODEL",
+        agentplatform_model,
+    )
     agentplatform_base_url: str = os.environ.get(
         "AGENTPLATFORM_BASE_URL",
         "https://litellm.tokengate.ru/v1",
