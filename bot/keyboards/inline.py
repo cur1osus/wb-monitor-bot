@@ -81,6 +81,8 @@ def dashboard_kb(is_admin: bool) -> InlineKeyboardMarkup:
         ],
         [
             _btn(tx.BTN_COMPARE, "wbm:compare:0"),
+        ],
+        [
             _btn(tx.BTN_SUPPORT, "wbm:help:0"),
         ],
     ]
