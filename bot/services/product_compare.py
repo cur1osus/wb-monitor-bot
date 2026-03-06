@@ -199,6 +199,28 @@ def _deterministic_compare(
         availability = int(max(0, min(100, availability * 0.65 + min(30, qty / 3) + min(20, sizes_count * 3))))
 
         overall_f = value * weights[0] + trust * weights[1] + (100 - risk) * weights[2] + availability * weights[3]
+
+        # Для режима "подарок" не должны побеждать только за счет минимальной цены.
+        # Добавляем бонус за "надежное качество" и легкий штраф за крайние ценовые позиции.
+        if mode == "gift":
+            quality = max(0.0, min(100.0, rating * 18.0 + rev_norm * 0.45))
+            if price is None or max_price <= min_price:
+                price_moderation = 60.0
+            else:
+                # Лучший балл — ближе к середине диапазона цен, а не к минимуму.
+                mid = (min_price + max_price) / 2.0
+                half = max(1.0, (max_price - min_price) / 2.0)
+                dist = abs(price - mid)
+                price_moderation = max(0.0, 100.0 - (dist / half) * 100.0)
+
+            overall_f = (
+                quality * 0.35
+                + trust * 0.25
+                + availability * 0.25
+                + (100 - risk) * 0.1
+                + price_moderation * 0.05
+            )
+
         overall = int(max(0, min(100, round(overall_f))))
 
         hist = history.get(p.wb_item_id, {})
