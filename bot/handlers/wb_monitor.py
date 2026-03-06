@@ -736,7 +736,11 @@ async def wb_add_cb(cb: CallbackQuery) -> None:
 
 
 def _quick_item_kb(
-    wb_item_id: int, *, already_tracked: bool = False
+    wb_item_id: int,
+    *,
+    already_tracked: bool = False,
+    reviews_btn_text: str | None = None,
+    search_btn_text: str | None = None,
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     if not already_tracked:
@@ -750,7 +754,7 @@ def _quick_item_kb(
     rows.append(
         [
             InlineKeyboardButton(
-                text=tx.QUICK_REVIEWS_BTN,
+                text=reviews_btn_text or tx.QUICK_REVIEWS_BTN,
                 callback_data=f"wbm:quick:reviews:{wb_item_id}",
             )
         ]
@@ -758,11 +762,51 @@ def _quick_item_kb(
     rows.append(
         [
             InlineKeyboardButton(
-                text=tx.QUICK_SEARCH_BTN, callback_data=f"wbm:quick:search:{wb_item_id}"
+                text=search_btn_text or tx.QUICK_SEARCH_BTN,
+                callback_data=f"wbm:quick:search:{wb_item_id}",
             )
         ]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def _quick_item_kb_with_usage(
+    *,
+    redis: "Redis",
+    user_tg_id: int,
+    user_plan: str,
+    wb_item_id: int,
+    already_tracked: bool,
+) -> InlineKeyboardMarkup:
+    period = _feature_period(user_plan)
+    cheap_limit = _feature_limit(user_plan, "cheap")
+    reviews_limit = _feature_limit(user_plan, "reviews")
+    cheap_used = await FeatureUsageDailyRD.get_used(
+        redis,
+        tg_user_id=user_tg_id,
+        feature="cheap",
+        period=period,
+    )
+    reviews_used = await FeatureUsageDailyRD.get_used(
+        redis,
+        tg_user_id=user_tg_id,
+        feature="reviews",
+        period=period,
+    )
+    return _quick_item_kb(
+        wb_item_id,
+        already_tracked=already_tracked,
+        reviews_btn_text=tx.button_with_usage(
+            tx.QUICK_REVIEWS_BTN,
+            used=reviews_used,
+            limit=reviews_limit,
+        ),
+        search_btn_text=tx.button_with_usage(
+            tx.QUICK_SEARCH_BTN,
+            used=cheap_used,
+            limit=cheap_limit,
+        ),
+    )
 
 
 def _quick_preview_text(*, product: object, already_tracked: bool) -> str:
@@ -858,7 +902,13 @@ async def wb_add_item_from_text(
 
     await msg.answer(
         text,
-        reply_markup=_quick_item_kb(wb_item_id, already_tracked=bool(existing)),
+        reply_markup=await _quick_item_kb_with_usage(
+            redis=redis,
+            user_tg_id=msg.from_user.id,
+            user_plan=user.plan,
+            wb_item_id=wb_item_id,
+            already_tracked=bool(existing),
+        ),
     )
 
 
@@ -887,7 +937,13 @@ async def wb_quick_preview_cb(
     await cb.answer()
     await cb.message.edit_text(
         _quick_preview_text(product=product, already_tracked=bool(existing)),
-        reply_markup=_quick_item_kb(wb_item_id, already_tracked=bool(existing)),
+        reply_markup=await _quick_item_kb_with_usage(
+            redis=redis,
+            user_tg_id=cb.from_user.id,
+            user_plan=user.plan,
+            wb_item_id=wb_item_id,
+            already_tracked=bool(existing),
+        ),
     )
 
 
