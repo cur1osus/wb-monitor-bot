@@ -213,6 +213,24 @@ class PromoActivationModel(Base):
     )
 
 
+class CompareRunModel(Base):
+    __tablename__ = "monitor_compare_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("monitor_users.id", ondelete="CASCADE"), index=True
+    )
+    mode: Mapped[str] = mapped_column(String(32), default="balanced", index=True)
+    input_item_ids: Mapped[list[int]] = mapped_column(JSONB, default=list)
+    winner_item_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    result_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(UTC).replace(tzinfo=None),
+        index=True,
+    )
+
+
 class SupportTicketModel(Base):
     """Тикеты поддержки."""
 

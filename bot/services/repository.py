@@ -14,6 +14,7 @@ from sqlalchemy.orm import selectinload
 
 from bot.db.models import (
     AlertLogModel,
+    CompareRunModel,
     MonitorUserModel,
     PromoActivationModel,
     PromoLinkModel,
@@ -615,6 +616,64 @@ async def log_event(
     )
     inserted_id = await session.scalar(stmt)
     return inserted_id is not None
+
+
+async def get_price_history_stats(
+    session: AsyncSession,
+    wb_item_ids: list[int],
+    days: int = 30,
+) -> dict[int, dict[str, float | int | None]]:
+    if not wb_item_ids:
+        return {}
+    since = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=max(1, days))
+    rows = (
+        await session.execute(
+            select(
+                TrackModel.wb_item_id,
+                func.min(SnapshotModel.price_current),
+                func.max(SnapshotModel.price_current),
+                func.avg(SnapshotModel.price_current),
+                func.count(SnapshotModel.id),
+            )
+            .join(SnapshotModel, SnapshotModel.track_id == TrackModel.id)
+            .where(
+                TrackModel.wb_item_id.in_(wb_item_ids),
+                SnapshotModel.fetched_at >= since,
+                SnapshotModel.price_current.is_not(None),
+            )
+            .group_by(TrackModel.wb_item_id)
+        )
+    ).all()
+
+    out: dict[int, dict[str, float | int | None]] = {}
+    for wb_item_id, min_p, max_p, avg_p, cnt in rows:
+        out[int(wb_item_id)] = {
+            "min": float(min_p) if min_p is not None else None,
+            "max": float(max_p) if max_p is not None else None,
+            "avg": float(avg_p) if avg_p is not None else None,
+            "count": int(cnt or 0),
+        }
+    return out
+
+
+async def create_compare_run(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    mode: str,
+    input_item_ids: list[int],
+    winner_item_id: int | None,
+    result_json: dict,
+) -> None:
+    session.add(
+        CompareRunModel(
+            user_id=user_id,
+            mode=mode,
+            input_item_ids=input_item_ids,
+            winner_item_id=winner_item_id,
+            result_json=result_json,
+        )
+    )
 
 
 async def get_admin_stats(session: AsyncSession, *, days: int) -> AdminStats:

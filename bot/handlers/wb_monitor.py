@@ -88,6 +88,8 @@ from bot.services.repository import (
     apply_runtime_intervals,
     set_user_tracks_interval,
     log_event,
+    create_compare_run,
+    get_price_history_stats,
 )
 from bot.services.review_analysis import (
     ReviewAnalysisConfigError,
@@ -737,13 +739,30 @@ async def wb_add_cb(cb: CallbackQuery) -> None:
     )
 
 
+def _compare_mode_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=tx.BTN_COMPARE_MODE_CHEAP, callback_data="wbm:compare:mode:cheap")],
+            [InlineKeyboardButton(text=tx.BTN_COMPARE_MODE_QUALITY, callback_data="wbm:compare:mode:quality")],
+            [InlineKeyboardButton(text=tx.BTN_COMPARE_MODE_GIFT, callback_data="wbm:compare:mode:gift")],
+            [InlineKeyboardButton(text=tx.BTN_COMPARE_MODE_SAFE, callback_data="wbm:compare:mode:safe")],
+            [InlineKeyboardButton(text=tx.SETTINGS_CANCEL_BTN, callback_data="wbm:cancel:0")],
+        ]
+    )
+
+
 @router.callback_query(F.data == "wbm:compare:0")
 async def wb_compare_cb(cb: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    await cb.message.edit_text(tx.COMPARE_MODE_PROMPT, reply_markup=_compare_mode_kb())
+
+
+@router.callback_query(F.data.regexp(r"wbm:compare:mode:(cheap|quality|gift|safe)"))
+async def wb_compare_mode_cb(cb: CallbackQuery, state: FSMContext) -> None:
+    mode = cb.data.split(":")[-1]
+    await state.update_data(compare_mode=mode)
     await state.set_state(SettingsState.waiting_for_compare_items)
-    await cb.message.edit_text(
-        tx.COMPARE_ITEMS_PROMPT,
-        reply_markup=add_item_prompt_kb(),
-    )
+    await cb.message.edit_text(tx.COMPARE_ITEMS_PROMPT, reply_markup=add_item_prompt_kb())
 
 
 def _quick_item_kb(
@@ -912,12 +931,27 @@ async def wb_compare_from_text(
         await msg.answer(tx.COMPARE_ITEMS_NOT_ENOUGH)
         return
 
+    user = await get_or_create_monitor_user(
+        session,
+        msg.from_user.id,
+        msg.from_user.username,
+        msg.from_user.first_name,
+        msg.from_user.last_name,
+        redis=redis,
+    )
+
+    data = await state.get_data()
+    compare_mode = str(data.get("compare_mode") or "balanced")
+    history = await get_price_history_stats(session, [p.wb_item_id for p in products], days=30)
+
     try:
         result = await compare_products_with_llm(
             products=products,
+            mode=compare_mode,
             api_key=se.agentplatform_api_key,
             model=se.agentplatform_model,
             api_base_url=se.agentplatform_base_url,
+            price_history=history,
         )
     except Exception:
         logger.exception("Compare products failed")
@@ -925,32 +959,85 @@ async def wb_compare_from_text(
         return
 
     by_id = {p.wb_item_id: p for p in products}
-    winner = by_id.get(result.winner_id)
+    score_by_id = {s.wb_item_id: s for s in result.scores}
+    winner = by_id.get(result.winner_id) or products[0]
+
     ranking_lines: list[str] = []
     for idx, nm_id in enumerate(result.ranking[:5], start=1):
         p = by_id.get(nm_id)
+        s = score_by_id.get(nm_id)
         if not p:
             continue
         price = f"{p.price}₽" if p.price is not None else "—"
         rating = f"{p.rating}" if p.rating is not None else "—"
+        extra = ""
+        if s:
+            extra = f" | score {s.overall}/100"
         ranking_lines.append(
-            f"{idx}. <a href='https://www.wildberries.ru/catalog/{nm_id}/detail.aspx'>{escape(p.title)}</a> — {price}, ⭐ {rating}"
+            f"{idx}. <a href='https://www.wildberries.ru/catalog/{nm_id}/detail.aspx'>{escape(p.title)}</a> — {price}, ⭐ {rating}{extra}"
         )
 
-    if not winner:
-        winner = products[0]
-
+    winner_score = score_by_id.get(winner.wb_item_id)
     winner_price = f"{winner.price}₽" if winner.price is not None else "—"
     winner_rating = f"{winner.rating}" if winner.rating is not None else "—"
+
+    score_block = ""
+    if winner_score:
+        score_block = (
+            f"📊 <b>Score:</b> overall {winner_score.overall}/100 | "
+            f"value {winner_score.value} | trust {winner_score.trust} | "
+            f"risk {winner_score.risk} | availability {winner_score.availability}\n"
+        )
+
+    risks_block = ""
+    if result.risks:
+        risks_block = "\n" + "\n".join([f"• {escape(r)}" for r in result.risks[:3]])
+
+    wait_tip_block = f"\n⏳ {escape(result.wait_tip)}" if result.wait_tip else ""
+
     text = (
         "⚖️ <b>Сравнение товаров</b>\n\n"
         f"🏆 <b>Лучший выбор:</b> <a href='https://www.wildberries.ru/catalog/{winner.wb_item_id}/detail.aspx'>{escape(winner.title)}</a>\n"
         f"💰 Цена: <b>{winner_price}</b>\n"
         f"⭐ Рейтинг: <b>{winner_rating}</b>\n"
-        f"📌 Почему: {escape(result.reason)}\n\n"
+        f"{score_block}"
+        f"📌 Почему: {escape(result.reason)}\n"
+        f"⚠️ <b>Риски:</b>{risks_block}"
+        f"{wait_tip_block}\n\n"
         "<b>Рейтинг кандидатов:</b>\n"
         + "\n".join(ranking_lines)
     )
+
+    try:
+        await create_compare_run(
+            session,
+            user_id=user.id,
+            mode=compare_mode,
+            input_item_ids=[p.wb_item_id for p in products],
+            winner_item_id=winner.wb_item_id,
+            result_json={
+                "reason": result.reason,
+                "ranking": result.ranking,
+                "risks": result.risks,
+                "wait_tip": result.wait_tip,
+                "scores": [
+                    {
+                        "id": s.wb_item_id,
+                        "overall": s.overall,
+                        "value": s.value,
+                        "trust": s.trust,
+                        "risk": s.risk,
+                        "availability": s.availability,
+                        "target_price": s.target_price,
+                    }
+                    for s in result.scores
+                ],
+            },
+        )
+        await session.commit()
+    except Exception:
+        logger.exception("Failed to save compare run")
+
     await state.clear()
     await msg.answer(text, link_preview_options=LinkPreviewOptions(is_disabled=True))
 
