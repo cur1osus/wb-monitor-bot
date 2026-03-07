@@ -23,7 +23,7 @@ FEATURE_LIMIT_REVIEWS_REACHED = (
 
 DASHBOARD_TEMPLATE = (
     "🔎 <b>WB Monitor</b>\n"
-    "<blockquote>Отслеживание цен и наличия на Wildberries</blockquote>\n\n"
+    "<blockquote>{hint}</blockquote>\n\n"
     "Тариф: <b>{plan_badge}</b>\n"
     "Товаров: <b>{used}</b> / {limit}\n"
     "Интервал проверок: каждые <b>{interval} мин</b>"
@@ -31,6 +31,16 @@ DASHBOARD_TEMPLATE = (
 PLAN_BADGE_PRO = "⭐ PRO"
 PLAN_BADGE_PRO_PLUS = "🚀 PRO+"
 PLAN_BADGE_FREE = "🆓 FREE"
+
+DASHBOARD_HINTS: tuple[str, ...] = (
+    "💡 Отправь ссылку или артикул WB — товар добавится в отслеживание за пару секунд.",
+    "🔔 Включай/выключай уведомления о наличии и цене в настройках каждого товара.",
+    "🎯 В карточке товара можно задать цель: цена в ₽ или падение в %.",
+    "📏 Для одежды и обуви можно отслеживать только нужные размеры.",
+    "🔎 Кнопка «Поиск» ищет похожие товары — удобно сравнить варианты перед покупкой.",
+    "🧠 Анализ отзывов помогает быстро увидеть сильные и слабые стороны товара.",
+    "⚙️ Если уведомлений много — поставь паузу на товар и вернись к нему позже.",
+)
 
 BTN_ADD_ITEM = "➕ Добавить товар"
 BTN_MY_TRACKS = "📋 Мои товары"
@@ -588,11 +598,18 @@ def dashboard_text(
     limit: int,
     interval: int,
 ) -> str:
+    # Меняем подсказку автоматически раз в 30 минут.
+    from datetime import datetime
+
+    hint_idx = int(datetime.now().timestamp() // 1800) % len(DASHBOARD_HINTS)
+    hint = DASHBOARD_HINTS[hint_idx]
+
     return DASHBOARD_TEMPLATE.format(
         plan_badge=plan_badge,
         used=used,
         limit=limit,
         interval=interval,
+        hint=hint,
     )
 
 
