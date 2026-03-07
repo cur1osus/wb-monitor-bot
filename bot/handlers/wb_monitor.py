@@ -2481,7 +2481,7 @@ async def wb_settings_cb(cb: CallbackQuery, session: AsyncSession) -> None:
         format_track_text(track) + tx.SETTINGS_SUFFIX,
         reply_markup=settings_kb(
             track_id,
-            has_sizes=bool(track.watch_sizes),
+            has_sizes=bool(track.last_sizes),
             pro_plan=_is_paid_plan(user.plan),
             qty_on=track.watch_qty,
             stock_on=track.watch_stock,
@@ -3594,7 +3594,7 @@ async def wb_settings_qty_cb(cb: CallbackQuery, session: AsyncSession) -> None:
             format_track_text(track) + tx.SETTINGS_SUFFIX,
             reply_markup=settings_kb(
                 track_id,
-                has_sizes=bool(track.watch_sizes),
+                has_sizes=bool(track.last_sizes),
                 pro_plan=True,
                 qty_on=track.watch_qty,
                 stock_on=track.watch_stock,
@@ -3635,7 +3635,7 @@ async def wb_settings_stock_cb(cb: CallbackQuery, session: AsyncSession) -> None
             format_track_text(track) + tx.SETTINGS_SUFFIX,
             reply_markup=settings_kb(
                 track_id,
-                has_sizes=bool(track.watch_sizes),
+                has_sizes=bool(track.last_sizes),
                 pro_plan=_is_paid_plan(user.plan),
                 qty_on=track.watch_qty,
                 stock_on=track.watch_stock,
@@ -3678,7 +3678,7 @@ async def wb_settings_price_fluctuation_cb(
             format_track_text(track) + tx.SETTINGS_SUFFIX,
             reply_markup=settings_kb(
                 track_id,
-                has_sizes=bool(track.watch_sizes),
+                has_sizes=bool(track.last_sizes),
                 pro_plan=_is_paid_plan(user.plan),
                 qty_on=track.watch_qty,
                 stock_on=track.watch_stock,
