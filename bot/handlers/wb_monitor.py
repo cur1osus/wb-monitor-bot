@@ -3558,10 +3558,15 @@ async def wb_admin_stats_cb(
         return
 
     stats = await get_admin_stats(session, days=days)
-    await cb.message.edit_text(
-        _admin_stats_text(stats),
-        reply_markup=admin_panel_kb(selected_days=days),
-    )
+    try:
+        await cb.message.edit_text(
+            _admin_stats_text(stats),
+            reply_markup=admin_panel_kb(selected_days=days),
+        )
+    except TelegramBadRequest as exc:
+        if "message is not modified" not in str(exc).lower():
+            raise
+    await cb.answer()
 
 
 @router.callback_query(F.data == "wbm:admin:grantpro")
