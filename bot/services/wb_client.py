@@ -548,21 +548,40 @@ async def _get_json_with_retries(
     for attempt in range(retries + 1):
         try:
             proxy = _proxy_for_attempt(attempt)
+            logger.info(
+                "WB request: attempt=%s timeout=%ss proxy=%s url=%s",
+                attempt + 1,
+                timeout,
+                proxy or "direct",
+                url,
+            )
             async with session.get(url, timeout=timeout, proxy=proxy) as resp:
+                logger.info(
+                    "WB response: attempt=%s status=%s proxy=%s url=%s",
+                    attempt + 1,
+                    resp.status,
+                    proxy or "direct",
+                    url,
+                )
                 if resp.status == 200:
                     data = await resp.json(content_type=None)
                     if isinstance(data, (dict, list)):
                         return data
-                    logger.debug("WB non-json-dict payload: %s", url)
+                    logger.warning("WB non-json payload: url=%s", url)
                     return None
 
-                logger.debug("WB search status=%s attempt=%s url=%s", resp.status, attempt + 1, url)
                 if resp.status == 429 and attempt < retries:
                     await asyncio.sleep(0.6 * (attempt + 1))
                     continue
                 return None
         except Exception as e:
-            logger.debug("WB request error attempt=%s url=%s err=%s", attempt + 1, url, type(e).__name__)
+            logger.warning(
+                "WB request error: attempt=%s proxy=%s url=%s err=%s",
+                attempt + 1,
+                proxy or "direct",
+                url,
+                type(e).__name__,
+            )
             if attempt < retries:
                 await asyncio.sleep(0.6 * (attempt + 1))
                 continue
