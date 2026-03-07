@@ -521,8 +521,15 @@ def _extract_products_from_search_payload(data: object) -> list[dict[str, object
     return []
 
 
+# ─── Proxy round-robin ───────────────────────────────────────────────────────
+# Global counter so concurrent requests get different proxies instead of
+# all piling onto the same one at the same retry attempt.
+_proxy_rr_counter = 0
+
+
 def _proxy_candidates() -> list[str | None]:
-    candidates: list[str | None] = [None]  # сначала пробуем напрямую
+    """Build the ordered proxy list: [None (direct)] + WB_HTTP_PROXIES + WB_HTTP_PROXY."""
+    candidates: list[str | None] = [None]  # direct first
     for proxy in WB_HTTP_PROXIES:
         if proxy and proxy not in candidates:
             candidates.append(proxy)
@@ -532,10 +539,26 @@ def _proxy_candidates() -> list[str | None]:
 
 
 def _proxy_for_attempt(attempt: int) -> str | None:
-    proxies = _proxy_candidates()
-    if not proxies:
-        return None
-    return proxies[attempt % len(proxies)]
+    """Round-robin proxy selection.
+
+    - attempt=0  → always direct (fast path, no proxy overhead)
+    - attempt>=1 → rotate through all proxies using a global counter so
+                   concurrent requests spread across the pool.
+    """
+    global _proxy_rr_counter
+    candidates = _proxy_candidates()
+    proxies_only = [p for p in candidates if p is not None]
+
+    if attempt == 0:
+        return None  # direct
+
+    if not proxies_only:
+        return None  # no proxies configured, fall through
+
+    # Pick next proxy in round-robin, wrap around
+    idx = _proxy_rr_counter % len(proxies_only)
+    _proxy_rr_counter += 1
+    return proxies_only[idx]
 
 
 async def _get_json_with_retries(
