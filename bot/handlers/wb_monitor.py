@@ -254,13 +254,22 @@ async def _live_filter_cheaper_in_stock(
         "accepted": 0,
     }
 
-    for item in candidates:
-        try:
-            snap = await fetch_product(redis, item.wb_item_id, use_cache=False)
-        except Exception:
+    sem = asyncio.Semaphore(6)
+
+    async def _fetch_one(item: WbSimilarProduct) -> "WbProductSnapshot | None":
+        async with sem:
+            try:
+                return await fetch_product(redis, item.wb_item_id, use_cache=False)
+            except Exception:
+                return None
+
+    snaps = await asyncio.gather(*(_fetch_one(item) for item in candidates))
+
+    for item, snap in zip(candidates, snaps):
+        if snap is None:
             reason_counts["fetch_error"] += 1
             continue
-        if not snap or snap.price is None:
+        if snap.price is None:
             reason_counts["no_snapshot_or_price"] += 1
             continue
         if not snap.in_stock:
@@ -2273,7 +2282,7 @@ async def wb_find_cheaper_cb(
                         candidates=live_confirmed,
                     )
 
-                    if live_confirmed:
+                    if live_confirmed and len(live_confirmed) > 3:
                         llm_ranked = await rerank_similar_with_llm(
                             api_key=se.agentplatform_api_key,
                             model=se.agentplatform_model,
@@ -2291,6 +2300,16 @@ async def wb_find_cheaper_cb(
                                 url=item.url,
                             )
                             for item in llm_ranked[:10]
+                        ]
+                    elif live_confirmed:
+                        reranked = [
+                            WbSimilarItemRD(
+                                wb_item_id=item.wb_item_id,
+                                title=item.title,
+                                price=str(item.price),
+                                url=item.url,
+                            )
+                            for item in live_confirmed[:10]
                         ]
 
             if not reranked:
