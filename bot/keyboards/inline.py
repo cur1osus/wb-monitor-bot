@@ -202,6 +202,7 @@ def settings_kb(
         rows.append([_btn(qty_label, f"wbm:qty:{track_id}", style=qty_style)])
     if has_sizes:
         rows.append([_btn(tx.BTN_SIZES, f"wbm:sizes:{track_id}")])
+        rows.append([_btn(tx.BTN_SIZES_RESET, f"wbm:sizes_reset:{track_id}")])
     rows.append([_btn(tx.BTN_BACK, f"wbm:back:{track_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 

@@ -3699,6 +3699,40 @@ async def wb_settings_price_fluctuation_cb(
     )
 
 
+def _sizes_picker_kb(track_id: int, all_sizes: list[str], selected: set[str]) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+
+    for idx, size in enumerate(all_sizes):
+        mark = "✅" if size in selected else "☑️"
+        row.append(
+            InlineKeyboardButton(
+                text=f"{mark} {size}",
+                callback_data=f"wbm:sizesel:{track_id}:{idx}",
+            )
+        )
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+
+    if row:
+        rows.append(row)
+
+    rows.append([InlineKeyboardButton(text=tx.BTN_SIZES_APPLY, callback_data=f"wbm:sizes_apply:{track_id}", style="success")])
+    rows.append([
+        InlineKeyboardButton(text=tx.SETTINGS_CANCEL_BTN, callback_data=f"wbm:settings:{track_id}"),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _sizes_picker_text(selected: set[str]) -> str:
+    selected_text = ", ".join(sorted(selected)) if selected else tx.SETTINGS_SIZES_NONE
+    return (
+        f"{tx.SETTINGS_SIZES_PROMPT}\n\n"
+        f"{tx.SETTINGS_SIZES_SELECTED.format(sizes=selected_text)}"
+    )
+
+
 @router.callback_query(F.data.regexp(r"wbm:sizes:(\d+)"))
 async def wb_settings_sizes_cb(
     cb: CallbackQuery, state: FSMContext, session: AsyncSession
@@ -3710,62 +3744,118 @@ async def wb_settings_sizes_cb(
         await cb.answer(tx.SETTINGS_NO_SIZES, show_alert=True)
         return
 
-    await state.update_data(track_id=track_id)
+    selected = set(track.watch_sizes or track.last_sizes or [])
+    await state.update_data(track_id=track_id, selected_sizes=list(selected))
     await state.set_state(SettingsState.waiting_for_sizes)
 
-    sizes_str = ", ".join(track.last_sizes)
-    cancel_kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=tx.SETTINGS_CANCEL_BTN,
-                    callback_data=f"wbm:settings:{track_id}",
-                )
-            ]
-        ]
-    )
     await cb.message.edit_text(
-        tx.SETTINGS_SIZES_PROMPT.format(sizes=sizes_str),
-        reply_markup=cancel_kb,
+        _sizes_picker_text(selected),
+        reply_markup=_sizes_picker_kb(track_id, track.last_sizes, selected),
     )
 
 
-@router.message(SettingsState.waiting_for_sizes, F.text)
-async def wb_settings_sizes_msg(
-    msg: Message, state: FSMContext, session: AsyncSession
+@router.callback_query(F.data.regexp(r"wbm:sizesel:(\d+):(\d+)"))
+async def wb_settings_sizes_toggle_cb(
+    cb: CallbackQuery, state: FSMContext, session: AsyncSession
 ) -> None:
+    parts = cb.data.split(":")
+    track_id = int(parts[2])
+    size_idx = int(parts[3])
+
     data = await state.get_data()
-    track_id = data.get("track_id")
-    if not track_id:
-        await state.clear()
-        return
+    state_track_id = data.get("track_id")
 
     track = await get_user_track_by_id(session, track_id)
-    if not track:
-        await state.clear()
+    if not track or not track.last_sizes:
+        await cb.answer(tx.SETTINGS_NO_SIZES, show_alert=True)
         return
 
-    text = msg.text.strip()
-    if text == "0" or text.lower() == tx.SETTINGS_SIZES_ALL_KEYWORD:
-        track.watch_sizes = track.last_sizes or []
-    else:
-        sizes = [s.strip() for s in text.split(",")]
-        # Filter sizes to only valid ones if we have them
-        if track.last_sizes:
-            sizes = [s for s in sizes if s in track.last_sizes]
-        track.watch_sizes = sizes
+    if size_idx < 0 or size_idx >= len(track.last_sizes):
+        await cb.answer(tx.INVALID_PAGE, show_alert=True)
+        return
 
+    selected = set(data.get("selected_sizes") or (track.watch_sizes or track.last_sizes or []))
+    size = track.last_sizes[size_idx]
+    if size in selected:
+        selected.remove(size)
+    else:
+        selected.add(size)
+
+    await state.update_data(track_id=track_id, selected_sizes=list(selected))
+    await cb.message.edit_text(
+        _sizes_picker_text(selected),
+        reply_markup=_sizes_picker_kb(track_id, track.last_sizes, selected),
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data.regexp(r"wbm:sizes_apply:(\d+)"))
+async def wb_settings_sizes_apply_cb(
+    cb: CallbackQuery, state: FSMContext, session: AsyncSession
+) -> None:
+    track_id = int(cb.data.split(":")[2])
+    data = await state.get_data()
+
+    track = await get_user_track_by_id(session, track_id)
+    user = await get_or_create_monitor_user(
+        session, cb.from_user.id, cb.from_user.username
+    )
+    if not track:
+        await state.clear()
+        await cb.answer(tx.TRACK_NOT_FOUND, show_alert=True)
+        return
+
+    selected = set(data.get("selected_sizes") or [])
+    track.watch_sizes = [s for s in (track.last_sizes or []) if s in selected]
     await session.commit()
-    await msg.answer(
+    await state.clear()
+
+    await cb.message.edit_text(
+        format_track_text(track) + tx.SETTINGS_SUFFIX,
+        reply_markup=settings_kb(
+            track_id,
+            has_sizes=bool(track.last_sizes),
+            pro_plan=_is_paid_plan(user.plan),
+            qty_on=track.watch_qty,
+            stock_on=track.watch_stock,
+            price_fluctuation_on=track.watch_price_fluctuation,
+        ),
+    )
+    await cb.answer(
         tx.SETTINGS_SIZES_DONE.format(
-            sizes=(
-                ", ".join(track.watch_sizes)
-                if track.watch_sizes
-                else tx.SETTINGS_SIZES_NONE
-            )
+            sizes=(", ".join(track.watch_sizes) if track.watch_sizes else tx.SETTINGS_SIZES_NONE)
         )
     )
-    await state.clear()
+
+
+@router.callback_query(F.data.regexp(r"wbm:sizes_reset:(\d+)"))
+async def wb_settings_sizes_reset_cb(
+    cb: CallbackQuery, session: AsyncSession
+) -> None:
+    track_id = int(cb.data.split(":")[2])
+    track = await get_user_track_by_id(session, track_id)
+    user = await get_or_create_monitor_user(
+        session, cb.from_user.id, cb.from_user.username
+    )
+    if not track:
+        await cb.answer(tx.TRACK_NOT_FOUND, show_alert=True)
+        return
+
+    track.watch_sizes = track.last_sizes or []
+    await session.commit()
+
+    await cb.message.edit_text(
+        format_track_text(track) + tx.SETTINGS_SUFFIX,
+        reply_markup=settings_kb(
+            track_id,
+            has_sizes=bool(track.last_sizes),
+            pro_plan=_is_paid_plan(user.plan),
+            qty_on=track.watch_qty,
+            stock_on=track.watch_stock,
+            price_fluctuation_on=track.watch_price_fluctuation,
+        ),
+    )
+    await cb.answer(tx.SETTINGS_SIZES_RESET_DONE)
 
 
 # ─── Support ─────────────────────────────────────────────────────────────────
