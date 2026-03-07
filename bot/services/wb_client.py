@@ -917,16 +917,29 @@ async def search_similar_cheaper_title_only(
             seen.add(t)
     query_text = " ".join(ordered[:10]) if ordered else base_title
 
-    async def run(s: ClientSession) -> list[WbSimilarProduct]:
-        query = quote_plus(query_text)
+    # Secondary query without brand — catches items where brand isn't in the title.
+    no_brand_ordered: list[str] = []
+    no_brand_seen: set[str] = set()
+    brand_token_set = set(brand_tokens)
+    for t in [*model_tokens, *[t for t in latin_tokens if t not in brand_token_set], *cyrillic_tokens]:
+        if t and t not in no_brand_seen:
+            no_brand_ordered.append(t)
+            no_brand_seen.add(t)
+    query_text_no_brand = " ".join(no_brand_ordered[:10]) if no_brand_ordered else ""
+
+    async def _run_single_query(
+        s: ClientSession,
+        q_text: str,
+        per_query_limit: int,
+    ) -> list[WbSimilarProduct]:
+        if not q_text.strip():
+            return []
+        query = quote_plus(q_text)
         collected: list[WbSimilarProduct] = []
         seen_ids: set[int] = set()
         best_by_seller: dict[str, WbSimilarProduct] = {}
+        expanded_limit = max(per_query_limit * 4, 20)
 
-        expanded_limit = max(limit * 4, 20)
-
-        # Fast fetch for search stage: keep logic, but reduce network fanout.
-        # Presence/color validation stays later in live_filter.
         for template in SEARCH_WB_URLS[:1]:
             for page in range(1, 3):
                 url = template.format(page=page, query=query)
@@ -937,7 +950,7 @@ async def search_similar_cheaper_title_only(
                 products = _extract_products_from_search_payload(data)
                 logger.debug(
                     "WB cheaper-search query=%r page=%s products=%s",
-                    query_text,
+                    q_text,
                     page,
                     len(products),
                 )
@@ -959,7 +972,6 @@ async def search_similar_cheaper_title_only(
 
                     title = str(product.get("name") or product.get("imt_name") or f"WB #{nm_id}")
 
-                    # Filter by subjectId (WB category) if provided
                     if base_subject_id is not None:
                         candidate_subject_id = _parse_int(
                             product.get("subjectId") or product.get("subjectID")
@@ -993,9 +1005,26 @@ async def search_similar_cheaper_title_only(
             if len(collected) >= expanded_limit:
                 break
 
-        final_items = collected + list(best_by_seller.values())
-        final_items.sort(key=lambda p: p.price)
-        return final_items[:limit]
+        result = collected + list(best_by_seller.values())
+        result.sort(key=lambda p: p.price)
+        return result[:per_query_limit]
+
+    async def run(s: ClientSession) -> list[WbSimilarProduct]:
+        per_query = max(limit, 10)
+        # Run both queries in parallel: with brand and without brand.
+        with_brand, without_brand = await asyncio.gather(
+            _run_single_query(s, query_text, per_query),
+            _run_single_query(s, query_text_no_brand, per_query),
+        )
+        # Merge: brand-query first (higher precision), then no-brand (higher recall).
+        merged: list[WbSimilarProduct] = []
+        merged_ids: set[int] = set()
+        for item in with_brand + without_brand:
+            if item.wb_item_id not in merged_ids:
+                merged.append(item)
+                merged_ids.add(item.wb_item_id)
+        merged.sort(key=lambda p: p.price)
+        return merged[: limit * 2]  # wider pool for LLM rerank
 
     if session is None:
         async with ClientSession(headers=WB_HTTP_HEADERS) as new_session:
