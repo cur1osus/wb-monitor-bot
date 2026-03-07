@@ -902,13 +902,16 @@ async def search_similar_cheaper_title_only(
 
     # Prioritize: model tokens (alphanumeric like "xtm-3000") and latin tokens
     # first — they are the most disambiguating signals for WB search.
-    model_tokens = list(_extract_model_tokens(base_title))
-    latin_tokens = [t for t in tokens if not _is_cyrillic_token(t) and t not in model_tokens]
-    cyrillic_tokens = [t for t in tokens if _is_cyrillic_token(t)]
+    # Include brand in model token extraction: brands often carry model-level tokens (e.g. "V8", "Pro Max").
+    combined_for_model = f"{base_title} {base_brand or ''}".strip()
+    model_tokens = list(_extract_model_tokens(combined_for_model))
+    all_tokens = tokens + [t for t in brand_tokens if t not in set(tokens)]
+    latin_tokens = [t for t in all_tokens if not _is_cyrillic_token(t) and t not in model_tokens]
+    cyrillic_tokens = [t for t in all_tokens if _is_cyrillic_token(t)]
 
     ordered: list[str] = []
     seen: set[str] = set()
-    for t in [*brand_tokens, *model_tokens, *latin_tokens, *cyrillic_tokens]:
+    for t in [*model_tokens, *latin_tokens, *cyrillic_tokens]:
         if t and t not in seen:
             ordered.append(t)
             seen.add(t)
