@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from aiogram import Router
 from aiogram.filters import CommandStart
+from aiogram.fsm.context import FSMContext
 
 from bot.db.redis import MonitorUserRD
 from bot.keyboards.inline import dashboard_kb, dashboard_text
@@ -74,11 +75,15 @@ def _extract_promo_code(message_text: str | None) -> str | None:
 @router.message(CommandStart())
 async def start_cmd(
     message: Message,
+    state: FSMContext,
     session: AsyncSession,
     redis: "Redis",
 ) -> None:
     if not message.from_user:
         return
+
+    # /start всегда должен выводить в главное меню и сбрасывать любой контекст.
+    await state.clear()
 
     ref_code = _extract_ref_code(message.text)
     promo_code = _extract_promo_code(message.text)
