@@ -2438,32 +2438,16 @@ async def wb_find_cheaper_cb(
         except (InvalidOperation, TypeError):
             return Decimal("999999999")
 
-    base_brand = _normalize_brand(
-        (current.brand if "current" in locals() and current else None)
-    )
+    alternatives = sorted(alternatives, key=_price_sort_key)
 
-    alternatives = sorted(
-        alternatives,
-        key=lambda item: (
-            0 if _is_same_brand(base_brand, item.brand) else 1,
-            _price_sort_key(item),
-        ),
-    )
-
-    mixed_brand_output = False
     for idx, item in enumerate(alternatives, start=1):
-        item_brand = _normalize_brand(item.brand)
-        if item_brand and not _is_same_brand(base_brand, item.brand):
-            mixed_brand_output = True
         title_text = escape(item.title)
         if item.brand:
-            title_text = f"{escape(item.brand)} · {title_text}"
+            title_text = f"{escape(item.brand)} {title_text}"
         lines.append(
             f'{idx}. <a href="{item.url}">{title_text}</a> — <b>{item.price} ₽</b>'
         )
     lines.append("")
-    if mixed_brand_output:
-        lines.append("ℹ️ В выдаче есть товары других брендов, чтобы расширить выбор.")
     lines.append(tx.FIND_CHEAPER_TIP)
 
     await cb.message.edit_text(
