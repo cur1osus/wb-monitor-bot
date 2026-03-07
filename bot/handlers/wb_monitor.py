@@ -1471,6 +1471,8 @@ async def wb_quick_searchmode_cb(
             for item in cached_search.items
         ]
 
+    color_relaxed = False
+
     await cb.answer()
     if not alternatives:
         user = await get_or_create_monitor_user(
@@ -1539,6 +1541,8 @@ async def wb_quick_searchmode_cb(
                 limit=10,
                 log_prefix=f"quick_id={wb_item_id} mode={mode} stage=search_color_relaxed",
             )
+            if live_confirmed:
+                color_relaxed = True
         live_confirmed = _filter_candidates_by_numeric_tokens(
             base_title=product.title,
             candidates=live_confirmed,
@@ -1589,6 +1593,11 @@ async def wb_quick_searchmode_cb(
         else tx.FIND_SIMILAR_HEADER.format(title=escape(product.title))
     )
     lines = [header, ""]
+    if color_relaxed:
+        lines.append(
+            "ℹ️ Для расширения выдачи ослабил фильтр по цвету (остальные проверки сохранены)."
+        )
+        lines.append("")
     for idx, item in enumerate(alternatives, start=1):
         lines.append(
             f'{idx}. <a href="{item.url}">{escape(item.title)}</a> — <b>{item.price} ₽</b>'
@@ -2309,7 +2318,7 @@ async def wb_find_cheaper_cb(
         "",
     ]
 
-    if mode == "similar" and color_relaxed:
+    if color_relaxed:
         lines.append(
             "ℹ️ Для расширения выдачи ослабил фильтр по цвету (остальные проверки сохранены)."
         )
