@@ -1364,6 +1364,7 @@ async def wb_quick_reviews_cb(
         tx.REVIEWS_ANALYSIS_PROGRESS.format(title=escape(product.title)),
         reply_markup=back_preview_kb,
     )
+    logger.info("quick-reviews started: user_id=%s wb_item_id=%s", cb.from_user.id, wb_item_id)
 
     review_limit = 50
     model = se.agentplatform_model.strip()
@@ -1425,7 +1426,24 @@ async def wb_quick_reviews_cb(
             ReviewAnalysisError,
             ReviewAnalysisRateLimitError,
         ) as exc:
+            logger.warning(
+                "quick-reviews failed (known): user_id=%s wb_item_id=%s err=%s",
+                cb.from_user.id,
+                wb_item_id,
+                type(exc).__name__,
+            )
             await cb.message.edit_text(str(exc), reply_markup=back_preview_kb)
+            return
+        except Exception as exc:
+            logger.exception(
+                "quick-reviews failed (unexpected): user_id=%s wb_item_id=%s",
+                cb.from_user.id,
+                wb_item_id,
+            )
+            await cb.message.edit_text(
+                "❌ Не удалось выполнить анализ отзывов. Попробуй ещё раз через минуту.",
+                reply_markup=back_preview_kb,
+            )
             return
 
         await QuickReviewInsightsCacheRD(
@@ -1445,6 +1463,7 @@ async def wb_quick_reviews_cb(
         reply_markup=back_preview_kb,
         link_preview_options=LinkPreviewOptions(is_disabled=True),
     )
+    logger.info("quick-reviews done: user_id=%s wb_item_id=%s", cb.from_user.id, wb_item_id)
 
 
 @router.callback_query(F.data.regexp(r"wbm:quick:search:(\d+)"))
