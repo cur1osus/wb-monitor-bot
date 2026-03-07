@@ -630,12 +630,14 @@ async def _track_kb_with_usage(
         tg_user_id=user_tg_id,
         feature="cheap",
         period=period,
+        session=session,
     )
     reviews_used = await FeatureUsageDailyRD.get_used(
         redis,
         tg_user_id=user_tg_id,
         feature="reviews",
         period=period,
+        session=session,
     )
 
     return paged_track_kb(
@@ -879,12 +881,14 @@ async def _quick_item_kb_with_usage(
         tg_user_id=user_tg_id,
         feature="cheap",
         period=period,
+        session=session,
     )
     reviews_used = await FeatureUsageDailyRD.get_used(
         redis,
         tg_user_id=user_tg_id,
         feature="reviews",
         period=period,
+        session=session,
     )
     return _quick_item_kb(
         wb_item_id,
@@ -1392,6 +1396,7 @@ async def wb_quick_reviews_cb(
             feature="reviews",
             limit=feature_limit,
             period=period,
+            session=session,
         )
         if not allowed:
             await cb.message.edit_text(
@@ -1519,6 +1524,7 @@ async def wb_quick_searchmode_cb(
             feature="cheap",
             limit=feature_limit,
             period=period,
+            session=session,
         )
         if not allowed:
             await cb.answer(
@@ -2101,6 +2107,7 @@ async def wb_find_cheaper_cb(
             feature="cheap",
             limit=feature_limit,
             period=period,
+            session=session,
         )
         if not allowed:
             await cb.answer(
@@ -2635,12 +2642,14 @@ async def wb_plan_cb(
         tg_user_id=cb.from_user.id,
         feature="cheap",
         period=cheap_period,
+        session=session,
     )
     reviews_used = await FeatureUsageDailyRD.get_used(
         redis,
         tg_user_id=cb.from_user.id,
         feature="reviews",
         period=reviews_period,
+        session=session,
     )
     cheap_left = max(0, cheap_limit - cheap_used)
     reviews_left = max(0, reviews_limit - reviews_used)

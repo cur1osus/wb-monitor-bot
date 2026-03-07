@@ -149,6 +149,30 @@ class AlertLogModel(Base):
     )
 
 
+class FeatureUsageModel(Base):
+    __tablename__ = "monitor_feature_usage"
+    __table_args__ = (
+        UniqueConstraint(
+            "tg_user_id",
+            "feature",
+            "period",
+            "window_key",
+            name="uq_monitor_feature_usage_window",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tg_user_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    feature: Mapped[str] = mapped_column(String(32), index=True)
+    period: Mapped[str] = mapped_column(String(16), index=True)
+    window_key: Mapped[str] = mapped_column(String(16), index=True)
+    used: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(UTC).replace(tzinfo=None),
+    )
+
+
 class ReferralRewardModel(Base):
     __tablename__ = "monitor_referral_rewards"
 
