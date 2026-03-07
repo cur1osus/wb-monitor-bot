@@ -3793,6 +3793,33 @@ async def wb_settings_sizes_toggle_cb(
     await cb.answer()
 
 
+@router.message(SettingsState.waiting_for_sizes, F.text)
+async def wb_settings_sizes_text_fallback(
+    msg: Message, state: FSMContext, session: AsyncSession
+) -> None:
+    data = await state.get_data()
+    track_id = data.get("track_id")
+    if not track_id:
+        await state.clear()
+        return
+
+    track = await get_user_track_by_id(session, int(track_id))
+    if not track or not track.last_sizes:
+        await state.clear()
+        await msg.answer(tx.SETTINGS_NO_SIZES)
+        return
+
+    selected_raw = data.get("selected_sizes", None)
+    if selected_raw is None:
+        selected = set(track.watch_sizes or track.last_sizes or [])
+    else:
+        selected = set(selected_raw)
+    await msg.answer(
+        "ℹ️ Выбор размеров теперь только кнопками. Нажмите нужные размеры ниже и затем «✅ Подтвердить».",
+        reply_markup=_sizes_picker_kb(track.id, track.last_sizes, selected),
+    )
+
+
 @router.callback_query(F.data.regexp(r"wbm:sizes_apply:(\d+)"))
 async def wb_settings_sizes_apply_cb(
     cb: CallbackQuery, state: FSMContext, session: AsyncSession
