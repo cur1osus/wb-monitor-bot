@@ -860,6 +860,7 @@ async def search_similar_cheaper_title_only(
     base_title: str,
     max_price: Decimal,
     exclude_wb_item_id: int,
+    base_brand: str | None = None,
     match_percent_threshold: int | None = None,
     limit: int = 5,
     session: ClientSession | None = None,
@@ -876,7 +877,14 @@ async def search_similar_cheaper_title_only(
     _ = match_percent_threshold
 
     tokens = _tokenize(base_title)
-    query_text = " ".join(tokens[:8]) if tokens else base_title
+    brand_tokens = _tokenize(base_brand or "")
+    merged: list[str] = []
+    seen: set[str] = set()
+    for t in [*brand_tokens, *tokens]:
+        if t and t not in seen:
+            merged.append(t)
+            seen.add(t)
+    query_text = " ".join(merged[:10]) if merged else base_title
 
     async def run(s: ClientSession) -> list[WbSimilarProduct]:
         query = quote_plus(query_text)

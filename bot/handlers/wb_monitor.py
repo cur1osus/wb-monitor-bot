@@ -1548,6 +1548,7 @@ async def wb_quick_searchmode_cb(
 
         found = await search_similar_cheaper_title_only(
             base_title=product.title,
+            base_brand=product.brand,
             match_percent_threshold=None,
             max_price=product.price if mode == "cheap" else Decimal("99999999"),
             exclude_wb_item_id=wb_item_id,
@@ -2196,6 +2197,7 @@ async def wb_find_cheaper_cb(
             if not reranked:
                 found = await search_similar_cheaper_title_only(
                     base_title=current.title or track.title,
+                    base_brand=current.brand,
                     match_percent_threshold=cfg.cheap_match_percent,
                     max_price=current.price if mode == "cheap" else Decimal("99999999"),
                     exclude_wb_item_id=track.wb_item_id,
