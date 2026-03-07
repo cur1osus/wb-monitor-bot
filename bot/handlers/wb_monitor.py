@@ -3718,6 +3718,7 @@ def _sizes_picker_kb(track_id: int, all_sizes: list[str], selected: set[str]) ->
     if row:
         rows.append(row)
 
+    rows.append([InlineKeyboardButton(text=tx.BTN_SIZES_RESET, callback_data=f"wbm:sizes_clear:{track_id}")])
     rows.append([InlineKeyboardButton(text=tx.BTN_SIZES_APPLY, callback_data=f"wbm:sizes_apply:{track_id}", style="success")])
     rows.append([
         InlineKeyboardButton(text=tx.SETTINGS_CANCEL_BTN, callback_data=f"wbm:settings:{track_id}"),
@@ -3763,8 +3764,6 @@ async def wb_settings_sizes_toggle_cb(
     size_idx = int(parts[3])
 
     data = await state.get_data()
-    state_track_id = data.get("track_id")
-
     track = await get_user_track_by_id(session, track_id)
     if not track or not track.last_sizes:
         await cb.answer(tx.SETTINGS_NO_SIZES, show_alert=True)
@@ -3828,32 +3827,20 @@ async def wb_settings_sizes_apply_cb(
     )
 
 
-@router.callback_query(F.data.regexp(r"wbm:sizes_reset:(\d+)"))
-async def wb_settings_sizes_reset_cb(
-    cb: CallbackQuery, session: AsyncSession
+@router.callback_query(F.data.regexp(r"wbm:sizes_clear:(\d+)"))
+async def wb_settings_sizes_clear_cb(
+    cb: CallbackQuery, state: FSMContext, session: AsyncSession
 ) -> None:
     track_id = int(cb.data.split(":")[2])
     track = await get_user_track_by_id(session, track_id)
-    user = await get_or_create_monitor_user(
-        session, cb.from_user.id, cb.from_user.username
-    )
-    if not track:
-        await cb.answer(tx.TRACK_NOT_FOUND, show_alert=True)
+    if not track or not track.last_sizes:
+        await cb.answer(tx.SETTINGS_NO_SIZES, show_alert=True)
         return
 
-    track.watch_sizes = track.last_sizes or []
-    await session.commit()
-
+    await state.update_data(track_id=track_id, selected_sizes=[])
     await cb.message.edit_text(
-        format_track_text(track) + tx.SETTINGS_SUFFIX,
-        reply_markup=settings_kb(
-            track_id,
-            has_sizes=bool(track.last_sizes),
-            pro_plan=_is_paid_plan(user.plan),
-            qty_on=track.watch_qty,
-            stock_on=track.watch_stock,
-            price_fluctuation_on=track.watch_price_fluctuation,
-        ),
+        _sizes_picker_text(set()),
+        reply_markup=_sizes_picker_kb(track_id, track.last_sizes, set()),
     )
     await cb.answer(tx.SETTINGS_SIZES_RESET_DONE)
 

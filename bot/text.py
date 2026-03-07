@@ -67,7 +67,7 @@ BTN_TARGETS = "🎯 Цель ₽ / %"
 BTN_RESET_TARGET = "♻️ Сброс цели"
 BTN_RESET_DROP = "♻️ Сброс падения"
 BTN_SIZES = "📏 Размеры"
-BTN_SIZES_RESET = "♻️ Сброс размеров"
+BTN_SIZES_RESET = "♻️ Очистить выбор"
 BTN_SIZES_APPLY = "✅ Подтвердить"
 BTN_BACK = "◀️ Назад"
 BTN_PAY_PRO = "⭐ Оплатить 150 звёзд — 30 дней Pro"
@@ -427,7 +427,7 @@ SETTINGS_SIZES_PROMPT = (
 )
 SETTINGS_SIZES_SELECTED = "Выбрано: <b>{sizes}</b>"
 SETTINGS_SIZES_DONE = "✅ Размеры для отслеживания обновлены: {sizes}"
-SETTINGS_SIZES_RESET_DONE = "✅ Фильтр размеров сброшен: теперь отслеживаются все размеры."
+SETTINGS_SIZES_RESET_DONE = "✅ Выбор размеров очищен."
 
 START_REF_LINKED = "✅ Вы подключены по реферальной ссылке."
 
