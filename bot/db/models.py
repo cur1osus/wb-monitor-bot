@@ -96,6 +96,10 @@ class TrackModel(Base):
 
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_notified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Адаптивный мониторинг: сколько раз менялась цена за всё время
+    price_change_count: Mapped[int] = mapped_column(Integer, default=0)
+    # Когда последний раз менялась цена (для расчёта «стабильного» товара)
+    last_price_changed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
         default=lambda: datetime.now(UTC).replace(tzinfo=None),

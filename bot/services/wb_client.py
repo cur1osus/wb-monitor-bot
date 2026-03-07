@@ -1539,6 +1539,145 @@ async def _search_similar_with_catalog(
     return [item for _, item in candidates[:limit]]
 
 
+def _parse_product_dict(p: dict, wb_item_id: int) -> "WbProductSnapshot":
+    """Parse a single product dict from WB API response into WbProductSnapshot."""
+    title = str(p.get("name") or p.get("imt_name") or f"WB #{wb_item_id}")
+    sizes_data = p.get("sizes", []) if isinstance(p.get("sizes"), list) else []
+
+    def _norm(raw: object) -> str | None:
+        val = str(raw or "").strip()
+        return None if not val or val in {"0", "00", "none", "None"} else val
+
+    sizes = sorted({sz for s in sizes_data for sz in [_norm(s.get("name"))] if sz})
+
+    in_stock = False
+    total_qty = 0
+    for s in sizes_data:
+        for stock in s.get("stocks") or []:
+            if isinstance(stock, dict):
+                qty = int(stock.get("qty", 0))
+                if qty > 0:
+                    in_stock = True
+                total_qty += max(0, qty)
+
+    color_names: list[str] = []
+    for c in (p.get("colors") or []):
+        if isinstance(c, dict) and isinstance(c.get("name"), str) and c["name"].strip():
+            color_names.append(c["name"].strip())
+
+    return WbProductSnapshot(
+        wb_item_id=wb_item_id,
+        title=title,
+        price=_extract_price(p),
+        rating=_extract_rating(p),
+        reviews=_extract_reviews(p),
+        in_stock=in_stock,
+        total_qty=total_qty,
+        sizes=sizes,
+        brand=str(p.get("brand")) if p.get("brand") else None,
+        entity=str(p.get("entity")) if p.get("entity") else None,
+        subject_id=_parse_int(p.get("subjectId")),
+        kind_id=_parse_int(p.get("kindId")),
+        colors=color_names,
+    )
+
+
+_BATCH_SIZE = 20  # WB API stable limit per batch request
+
+
+async def fetch_products_batch(
+    redis: "Redis",
+    wb_item_ids: list[int],
+    session: ClientSession | None = None,
+) -> dict[int, WbProductSnapshot]:
+    """Fetch multiple WB products in one or more batch API requests.
+
+    Groups ids into batches of up to _BATCH_SIZE (20), sends one request per batch.
+    Returns dict[wb_item_id → WbProductSnapshot]. Missing items are omitted.
+    """
+    if not wb_item_ids:
+        return {}
+
+    seen: set[int] = set()
+    unique_ids: list[int] = []
+    for nm in wb_item_ids:
+        if nm not in seen:
+            seen.add(nm)
+            unique_ids.append(nm)
+
+    results: dict[int, WbProductSnapshot] = {}
+
+    async def _run_batch(s: ClientSession, batch: list[int]) -> None:
+        nm_param = ";".join(str(nm) for nm in batch)
+        urls = [
+            f"https://card.wb.ru/cards/v4/detail?appType=1&curr=rub&dest=-1257786&nm={nm_param}",
+            f"https://card.wb.ru/cards/v4/detail?appType=1&curr=rub&dest=-1029256&nm={nm_param}",
+        ]
+        data = None
+        for url in urls:
+            for proxy in _proxy_candidates():
+                try:
+                    async with s.get(url, timeout=30, proxy=proxy) as resp:
+                        if resp.status == 200:
+                            data = await resp.json(content_type=None)
+                            break
+                except Exception:
+                    continue
+            if data is not None:
+                break
+
+        if not isinstance(data, dict):
+            logger.warning("BATCH_FETCH: empty response for batch size=%d", len(batch))
+            return
+
+        products = data.get("products") or data.get("data", {}).get("products", [])
+        if not isinstance(products, list):
+            return
+
+        for p in products:
+            if not isinstance(p, dict):
+                continue
+            nm_id = _parse_int(p.get("id") or p.get("nmId") or p.get("nm_id"))
+            if nm_id is None:
+                continue
+            try:
+                snap = _parse_product_dict(p, nm_id)
+            except Exception:
+                logger.exception("BATCH_FETCH: parse error nm_id=%s", nm_id)
+                continue
+            results[nm_id] = snap
+            # Cache each item in Redis
+            try:
+                await WbItemCacheRD(
+                    wb_item_id=nm_id,
+                    title=snap.title,
+                    price=str(snap.price) if snap.price is not None else None,
+                    rating=str(snap.rating) if snap.rating is not None else None,
+                    reviews=snap.reviews,
+                    in_stock=snap.in_stock,
+                    total_qty=snap.total_qty,
+                    sizes=snap.sizes,
+                    brand=snap.brand,
+                ).save(redis)
+            except Exception:
+                logger.debug("BATCH_FETCH: redis cache error nm_id=%s", nm_id)
+
+        got = sum(1 for nm in batch if nm in results)
+        logger.info("BATCH_FETCH: requested=%d got=%d", len(batch), got)
+
+    async def _do_batches(s: ClientSession) -> None:
+        for i in range(0, len(unique_ids), _BATCH_SIZE):
+            await _run_batch(s, unique_ids[i: i + _BATCH_SIZE])
+
+    if session is None:
+        async with ClientSession(headers=WB_HTTP_HEADERS) as new_session:
+            await _do_batches(new_session)
+    else:
+        await _do_batches(session)
+
+    return results
+
+
 async def _fetch_and_cache(
     session: ClientSession,
     redis: "Redis",
