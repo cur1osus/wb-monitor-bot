@@ -223,24 +223,46 @@ def extract_wb_item_id(url_or_text: str) -> int | None:
 
 
 def _extract_price(product: dict[str, object]) -> Decimal | None:
-    sale_price = product.get("salePriceU")
+    # Часто WB не отдаёт top-level salePriceU, а цена лежит в одном из sizes[].price.*
+    raw_price = product.get("salePriceU")
+
+    # Пробуем дополнительные top-level поля, если salePriceU пустой
+    if not isinstance(raw_price, (int, float)):
+        for key in ("priceU", "productPriceU", "salePrice", "price"):
+            value = product.get(key)
+            if isinstance(value, (int, float)):
+                raw_price = value
+                break
+
     sizes_data = product.get("sizes")
-    if (
-        not isinstance(sale_price, (int, float))
-        and isinstance(sizes_data, list)
-        and sizes_data
-    ):
-        first_size = sizes_data[0]
-        if isinstance(first_size, dict):
-            price_data = first_size.get("price")
-            if isinstance(price_data, dict):
-                first_price = price_data.get("product")
-                sale_price = (
-                    first_price if isinstance(first_price, (int, float)) else None
-                )
-    if not isinstance(sale_price, (int, float)):
+    if not isinstance(raw_price, (int, float)) and isinstance(sizes_data, list):
+        size_prices: list[int | float] = []
+        for size in sizes_data:
+            if not isinstance(size, dict):
+                continue
+            price_data = size.get("price")
+            if not isinstance(price_data, dict):
+                continue
+
+            # Предпочитаем product, затем basic
+            for key in ("product", "basic"):
+                v = price_data.get(key)
+                if isinstance(v, (int, float)):
+                    size_prices.append(v)
+                    break
+
+        if size_prices:
+            # Берём минимальную доступную цену по размерам
+            raw_price = min(size_prices)
+
+    if not isinstance(raw_price, (int, float)):
         return None
-    return Decimal(str(sale_price)) / Decimal("100")
+
+    price_dec = Decimal(str(raw_price))
+    # Большинство WB-полей в копейках (priceU/salePriceU), конвертируем в рубли
+    if price_dec >= Decimal("1000"):
+        return price_dec / Decimal("100")
+    return price_dec
 
 
 def _extract_rating(product: dict[str, object]) -> Decimal | None:
