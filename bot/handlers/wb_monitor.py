@@ -1554,10 +1554,37 @@ async def wb_quick_searchmode_cb(
             exclude_wb_item_id=wb_item_id,
             limit=20,
         )
-
-        fast_filtered = _filter_candidates_by_numeric_tokens(
+        live_confirmed = await _live_filter_cheaper_in_stock(
+            redis,
+            found,
+            current_price=product.price,
+            base_kind_id=product.kind_id,
+            base_brand=product.brand,
+            base_colors=product.colors,
+            enforce_color=True,
+            require_cheaper=(mode == "cheap"),
+            limit=10,
+            log_prefix=f"quick_id={wb_item_id} mode={mode} stage=search",
+        )
+        if mode == "cheap" and not live_confirmed:
+            # Fallback: если по строгому совпадению цвета пусто — пробуем без цветового фильтра.
+            live_confirmed = await _live_filter_cheaper_in_stock(
+                redis,
+                found,
+                current_price=product.price,
+                base_kind_id=product.kind_id,
+                base_brand=product.brand,
+                base_colors=product.colors,
+                enforce_color=False,
+                require_cheaper=True,
+                limit=10,
+                log_prefix=f"quick_id={wb_item_id} mode={mode} stage=search_color_relaxed",
+            )
+            if live_confirmed:
+                color_relaxed = True
+        live_confirmed = _filter_candidates_by_numeric_tokens(
             base_title=product.title,
-            candidates=found,
+            candidates=live_confirmed,
         )
 
         alternatives = [
@@ -1568,7 +1595,7 @@ async def wb_quick_searchmode_cb(
                 url=item.url,
                 brand=item.brand,
             )
-            for item in fast_filtered[:10]
+            for item in live_confirmed[:10]
         ]
 
         await QuickSimilarSearchCacheRD(
