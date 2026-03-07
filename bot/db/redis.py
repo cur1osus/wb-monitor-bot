@@ -144,6 +144,7 @@ class WbSimilarItemRD(msgspec.Struct, kw_only=True, array_like=True):
     title: str
     price: str
     url: str
+    brand: str | None = None
 
 
 class WbSimilarSearchCacheRD(_RDBase):
@@ -280,6 +281,7 @@ class QuickSimilarItemRD(msgspec.Struct, kw_only=True, array_like=True):
     title: str
     price: str
     url: str
+    brand: str | None = None
 
 
 class QuickSimilarSearchCacheRD(_RDBase):

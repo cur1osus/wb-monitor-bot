@@ -200,6 +200,7 @@ class WbSimilarProduct:
     title: str
     price: Decimal
     url: str
+    brand: str | None = None
 
 
 @dataclass(frozen=True)
@@ -921,6 +922,7 @@ async def search_similar_cheaper_title_only(
                         title=title,
                         price=price,
                         url=f"https://www.wildberries.ru/catalog/{nm_id}/detail.aspx",
+                        brand=str(product.get("brand") or product.get("brandName") or "").strip() or None,
                     )
 
                     seller = _seller_key(product)

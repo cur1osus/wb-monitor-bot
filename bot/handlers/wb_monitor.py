@@ -204,12 +204,37 @@ def _filter_candidates_by_numeric_tokens(
     return out
 
 
+def _normalize_brand(brand: str | None) -> str:
+    return (brand or "").strip().lower()
+
+
+def _is_same_brand(base_brand: str | None, candidate_brand: str | None) -> bool:
+    b = _normalize_brand(base_brand)
+    c = _normalize_brand(candidate_brand)
+    return bool(b and c and b == c)
+
+
+def _sort_by_brand_then_price(
+    items: list[WbSimilarProduct], *, base_brand: str | None
+) -> list[WbSimilarProduct]:
+    if not items:
+        return items
+    return sorted(
+        items,
+        key=lambda item: (
+            0 if _is_same_brand(base_brand, item.brand) else 1,
+            item.price,
+        ),
+    )
+
+
 async def _live_filter_cheaper_in_stock(
     redis: "Redis",
     candidates: list[WbSimilarProduct],
     *,
     current_price: Decimal,
     base_kind_id: int | None = None,
+    base_brand: str | None = None,
     base_colors: list[str] | None = None,
     enforce_color: bool = True,
     require_cheaper: bool = True,
@@ -271,11 +296,12 @@ async def _live_filter_cheaper_in_stock(
                 title=snap.title or item.title,
                 price=snap.price,
                 url=item.url,
+                brand=snap.brand or item.brand,
             )
         )
         reason_counts["accepted"] += 1
-        if len(out) >= limit:
-            break
+
+    out = _sort_by_brand_then_price(out, base_brand=base_brand)[:limit]
 
     if log_prefix:
         logger.info(
@@ -882,6 +908,7 @@ def _quick_preview_text(*, product: object, already_tracked: bool) -> str:
     reviews = getattr(product, "reviews", None)
     in_stock = bool(getattr(product, "in_stock", False))
     title = str(getattr(product, "title", "Товар"))
+    brand = str(getattr(product, "brand", "") or "").strip()
 
     price_text = f"{price}₽" if price else tx.TRACK_ADDED_PRICE_UNKNOWN
     rating_text = (
@@ -902,6 +929,8 @@ def _quick_preview_text(*, product: object, already_tracked: bool) -> str:
         rating=rating_text,
         in_stock=in_stock_text,
     )
+    if brand:
+        text = f"{text}\n🏷 Бренд: {escape(brand)}"
     if already_tracked:
         text = f"{text}\n\n{tx.QUICK_ALREADY_TRACKED}"
     return text
@@ -1467,6 +1496,7 @@ async def wb_quick_searchmode_cb(
                 title=item.title,
                 price=item.price,
                 url=item.url,
+                brand=item.brand,
             )
             for item in cached_search.items
         ]
@@ -1522,6 +1552,7 @@ async def wb_quick_searchmode_cb(
             found,
             current_price=product.price,
             base_kind_id=product.kind_id,
+            base_brand=product.brand,
             base_colors=product.colors,
             enforce_color=True,
             require_cheaper=(mode == "cheap"),
@@ -1535,6 +1566,7 @@ async def wb_quick_searchmode_cb(
                 found,
                 current_price=product.price,
                 base_kind_id=product.kind_id,
+                base_brand=product.brand,
                 base_colors=product.colors,
                 enforce_color=False,
                 require_cheaper=True,
@@ -1554,6 +1586,7 @@ async def wb_quick_searchmode_cb(
                 title=item.title,
                 price=str(item.price),
                 url=item.url,
+                brand=item.brand,
             )
             for item in live_confirmed[:10]
         ]
@@ -1568,6 +1601,7 @@ async def wb_quick_searchmode_cb(
                     title=item.title,
                     price=item.price,
                     url=item.url,
+                    brand=item.brand,
                 )
                 for item in alternatives
             ],
@@ -1584,7 +1618,13 @@ async def wb_quick_searchmode_cb(
         await cb.message.edit_text(text, reply_markup=back_quick_kb)
         return
 
-    alternatives = sorted(alternatives, key=lambda x: Decimal(str(x.price)))
+    alternatives = sorted(
+        alternatives,
+        key=lambda x: (
+            0 if _is_same_brand(getattr(product, "brand", None), getattr(x, "brand", None)) else 1,
+            Decimal(str(x.price)),
+        ),
+    )
     header = (
         tx.FIND_CHEAPER_HEADER.format(
             price=current_price_text, title=escape(product.title)
@@ -1598,11 +1638,22 @@ async def wb_quick_searchmode_cb(
             "ℹ️ Для расширения выдачи ослабил фильтр по цвету (остальные проверки сохранены)."
         )
         lines.append("")
+
+    base_brand = _normalize_brand(getattr(product, "brand", None))
+    mixed_brand_output = False
     for idx, item in enumerate(alternatives, start=1):
+        title_text = escape(item.title)
+        item_brand = _normalize_brand(getattr(item, "brand", None))
+        if item_brand and item_brand != base_brand:
+            mixed_brand_output = True
+        if getattr(item, "brand", None):
+            title_text = f"{escape(str(item.brand))} · {title_text}"
         lines.append(
-            f'{idx}. <a href="{item.url}">{escape(item.title)}</a> — <b>{item.price} ₽</b>'
+            f'{idx}. <a href="{item.url}">{title_text}</a> — <b>{item.price} ₽</b>'
         )
     lines.append("")
+    if mixed_brand_output:
+        lines.append("ℹ️ В выдаче есть товары других брендов, чтобы расширить выбор.")
     lines.append(tx.FIND_CHEAPER_TIP)
     await cb.message.edit_text(
         "\n".join(lines),
@@ -2148,6 +2199,7 @@ async def wb_find_cheaper_cb(
                         found,
                         current_price=current.price,
                         base_kind_id=current.kind_id,
+                        base_brand=current.brand,
                         base_colors=current.colors,
                         enforce_color=True,
                         require_cheaper=(mode == "cheap"),
@@ -2160,6 +2212,7 @@ async def wb_find_cheaper_cb(
                             found,
                             current_price=current.price,
                             base_kind_id=current.kind_id,
+                            base_brand=current.brand,
                             base_colors=current.colors,
                             enforce_color=False,
                             require_cheaper=True,
@@ -2172,6 +2225,7 @@ async def wb_find_cheaper_cb(
                             found,
                             current_price=current.price,
                             base_kind_id=current.kind_id,
+                            base_brand=current.brand,
                             base_colors=current.colors,
                             enforce_color=False,
                             require_cheaper=False,
@@ -2230,6 +2284,7 @@ async def wb_find_cheaper_cb(
                     live_input,
                     current_price=current.price,
                     base_kind_id=current.kind_id,
+                    base_brand=current.brand,
                     base_colors=current.colors,
                     enforce_color=True,
                     require_cheaper=(mode == "cheap"),
@@ -2242,6 +2297,7 @@ async def wb_find_cheaper_cb(
                         live_input,
                         current_price=current.price,
                         base_kind_id=current.kind_id,
+                        base_brand=current.brand,
                         base_colors=current.colors,
                         enforce_color=False,
                         require_cheaper=True,
@@ -2254,6 +2310,7 @@ async def wb_find_cheaper_cb(
                         live_input,
                         current_price=current.price,
                         base_kind_id=current.kind_id,
+                        base_brand=current.brand,
                         base_colors=current.colors,
                         enforce_color=False,
                         require_cheaper=False,
@@ -2348,13 +2405,28 @@ async def wb_find_cheaper_cb(
         except (InvalidOperation, TypeError):
             return Decimal("999999999")
 
-    alternatives = sorted(alternatives, key=_price_sort_key)
+    alternatives = sorted(
+        alternatives,
+        key=lambda item: (
+            0 if _is_same_brand(current.brand, item.brand) else 1,
+            _price_sort_key(item),
+        ),
+    )
 
+    mixed_brand_output = False
     for idx, item in enumerate(alternatives, start=1):
+        item_brand = _normalize_brand(item.brand)
+        if item_brand and not _is_same_brand(current.brand, item.brand):
+            mixed_brand_output = True
+        title_text = escape(item.title)
+        if item.brand:
+            title_text = f"{escape(item.brand)} · {title_text}"
         lines.append(
-            f'{idx}. <a href="{item.url}">{escape(item.title)}</a> — <b>{item.price} ₽</b>'
+            f'{idx}. <a href="{item.url}">{title_text}</a> — <b>{item.price} ₽</b>'
         )
     lines.append("")
+    if mixed_brand_output:
+        lines.append("ℹ️ В выдаче есть товары других брендов, чтобы расширить выбор.")
     lines.append(tx.FIND_CHEAPER_TIP)
 
     await cb.message.edit_text(
