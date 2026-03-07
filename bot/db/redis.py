@@ -152,9 +152,10 @@ class WbSimilarItemRD(msgspec.Struct, kw_only=True, array_like=True):
 
 
 class WbSimilarSearchCacheRD(_RDBase):
-    """Кэш результата поиска «похожих дешевле». TTL 10 минут."""
+    """Кэш результата поиска «похожих дешевле/похожих». TTL 10 минут."""
 
     track_id: int
+    mode: str = "cheap"  # cheap|similar
     base_price: str
     match_percent: int | None = None
     items: list[WbSimilarItemRD] = []
@@ -164,12 +165,13 @@ class WbSimilarSearchCacheRD(_RDBase):
         cls,
         redis: Redis,
         track_id: int,
+        mode: str = "cheap",
     ) -> "WbSimilarSearchCacheRD | None":
-        data = await cls._get_raw(redis, track_id)
+        data = await cls._get_raw(redis, track_id, mode)
         return msgspec.msgpack.decode(data, type=cls) if data else None
 
     async def save(self, redis: Redis) -> None:
-        await self._save_raw(redis, self.track_id, ttl=_WB_SIMILAR_TTL)
+        await self._save_raw(redis, self.track_id, self.mode, ttl=_WB_SIMILAR_TTL)
 
 
 # ─── WorkerStateRD ────────────────────────────────────────────────────────────

@@ -2093,7 +2093,7 @@ async def wb_find_cheaper_cb(
     color_relaxed = False
     # Кэшируем одинаково для обоих режимов (cheap/similar)
     use_cache = True
-    cached = await WbSimilarSearchCacheRD.get(redis, track.id) if use_cache else None
+    cached = await WbSimilarSearchCacheRD.get(redis, track.id, mode=mode) if use_cache else None
     if cached is None or cached.match_percent != cfg.cheap_match_percent:
         user = await get_or_create_monitor_user(
             session,
@@ -2351,6 +2351,7 @@ async def wb_find_cheaper_cb(
         if use_cache:
             await WbSimilarSearchCacheRD(
                 track_id=track.id,
+                mode=mode,
                 base_price=current_price_text,
                 match_percent=cfg.cheap_match_percent,
                 items=alternatives,
