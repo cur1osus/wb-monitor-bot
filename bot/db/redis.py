@@ -155,8 +155,8 @@ class WbSimilarSearchCacheRD(_RDBase):
     """Кэш результата поиска «похожих дешевле/похожих». TTL 10 минут."""
 
     track_id: int
-    mode: str = "cheap"  # cheap|similar
     base_price: str
+    mode: str = "cheap"  # cheap|similar
     match_percent: int | None = None
     items: list[WbSimilarItemRD] = []
 
