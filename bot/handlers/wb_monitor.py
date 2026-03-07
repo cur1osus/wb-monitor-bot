@@ -2082,8 +2082,8 @@ async def wb_find_cheaper_cb(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text=tx.FIND_CHEAPER_TO_LIST_BTN,
-                    callback_data=f"wbm:back:{track.id}",
+                    text=tx.BTN_BACK,
+                    callback_data=f"wbm:cheap:{track.id}",
                 )
             ]
         ]
