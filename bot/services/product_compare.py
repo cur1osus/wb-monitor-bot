@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import math
 import re
 from dataclasses import dataclass
+from html import escape as escape_html
 
 from aiohttp import ClientSession
 
@@ -281,9 +283,21 @@ def _deterministic_compare(
 
     ranked = sorted(scores, key=lambda s: s.overall, reverse=True)
     winner = ranked[0]
-    wait_tip = None
-    if winner.target_price is not None:
-        wait_tip = f"Можно подождать цену около {winner.target_price}₽ (по историческому минимуму)."
+
+    # Build wait_tip covering ALL products that have a historical minimum.
+    wait_tips: list[str] = []
+    for s in ranked:
+        if s.target_price is not None:
+            prod = next((p for p in products if p.wb_item_id == s.wb_item_id), None)
+            if prod:
+                current = float(prod.price) if prod.price is not None else None
+                label = escape_html(prod.title[:40]) if prod.title else str(s.wb_item_id)
+                if current is not None and s.target_price < current:
+                    wait_tips.append(f"{label}: мин. {s.target_price}₽ (сейчас {int(current)}₽)")
+                else:
+                    wait_tips.append(f"{label}: ист. мин. {s.target_price}₽")
+
+    wait_tip = ("Исторические минимумы: " + "; ".join(wait_tips)) if wait_tips else None
 
     risks = [
         "Проверь размерную сетку и отзывы по размеру.",
@@ -301,9 +315,16 @@ def _deterministic_compare(
 
 
 async def _fetch_review_signals_many(wb_item_ids: list[int]) -> dict[int, dict[str, float | int]]:
+    results = await asyncio.gather(
+        *(_fetch_review_signals(nm) for nm in wb_item_ids),
+        return_exceptions=True,
+    )
     out: dict[int, dict[str, float | int]] = {}
-    for nm in wb_item_ids:
-        out[nm] = await _fetch_review_signals(nm)
+    for nm, res in zip(wb_item_ids, results):
+        if isinstance(res, dict):
+            out[nm] = res
+        else:
+            out[nm] = {"critical_share": 0.0, "stability": 50.0}
     return out
 
 

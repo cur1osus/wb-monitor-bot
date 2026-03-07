@@ -317,6 +317,58 @@ class QuickSimilarSearchCacheRD(_RDBase):
         )
 
 
+# ─── WbCompareCacheRD ─────────────────────────────────────────────────────────
+_WB_COMPARE_TTL: Final[int] = int(timedelta(minutes=30).total_seconds())
+
+
+class WbCompareScoreRD(msgspec.Struct, kw_only=True, array_like=True):
+    wb_item_id: int
+    value: int
+    trust: int
+    risk: int
+    availability: int
+    overall: int
+    target_price: int | None = None
+
+
+class WbCompareCacheRD(_RDBase):
+    """Кэш результата сравнения товаров по паре/набору. TTL 30 минут.
+    Ключ строится из отсортированных wb_item_id + mode.
+    """
+
+    item_ids_key: str  # отсортированные идентификаторы через ':'
+    mode: str
+    winner_id: int
+    ranking: list[int]
+    reason: str
+    risks: list[str] = []
+    wait_tip: str | None = None
+    scores: list[WbCompareScoreRD] = []
+
+    @classmethod
+    def _ids_key(cls, wb_item_ids: list[int]) -> str:
+        return ":".join(str(i) for i in sorted(wb_item_ids))
+
+    @classmethod
+    async def get(
+        cls,
+        redis: Redis,
+        wb_item_ids: list[int],
+        mode: str,
+    ) -> "WbCompareCacheRD | None":
+        ids_key = cls._ids_key(wb_item_ids)
+        data = await cls._get_raw(redis, ids_key, mode)
+        return msgspec.msgpack.decode(data, type=cls) if data else None
+
+    async def save(self, redis: Redis) -> None:
+        await self._save_raw(
+            redis,
+            self.item_ids_key,
+            self.mode,
+            ttl=_WB_COMPARE_TTL,
+        )
+
+
 # ─── FeatureUsageDailyRD ──────────────────────────────────────────────────────
 class FeatureUsageDailyRD:
     """Счетчик обращений к тяжелым фичам по дням/месяцам (UTC)."""

@@ -35,6 +35,8 @@ from bot.db.redis import (
     QuickReviewInsightsCacheRD,
     QuickSimilarItemRD,
     QuickSimilarSearchCacheRD,
+    WbCompareCacheRD,
+    WbCompareScoreRD,
     WbReviewInsightsCacheRD,
     WbSimilarItemRD,
     WbSimilarSearchCacheRD,
@@ -1059,31 +1061,83 @@ async def wb_compare_from_text(
     compare_mode = str(data.get("compare_mode") or "balanced")
     history = await get_price_history_stats(session, [p.wb_item_id for p in products], days=30)
 
-    try:
-        result = await compare_products_with_llm(
-            products=products,
-            mode=compare_mode,
-            api_key=se.agentplatform_api_key,
-            model=se.agentplatform_compare_model,
-            api_base_url=se.agentplatform_base_url,
-            price_history=history,
-        )
-    except Exception:
-        logger.exception("Compare products failed")
-        # Refund the limit on error for non-admins
-        if not admin:
-            try:
-                await FeatureUsageDailyRD.try_consume(
-                    redis,
-                    tg_user_id=user.tg_user_id,
-                    feature="compare",
-                    limit=9999,
-                    period="day",
+    wb_ids_list = [p.wb_item_id for p in products]
+
+    # ── Check Redis cache ────────────────────────────────────────────────────
+    cached = await WbCompareCacheRD.get(redis, wb_ids_list, compare_mode)
+    if cached:
+        from bot.services.product_compare import CompareResult, ProductScore
+        result = CompareResult(
+            winner_id=cached.winner_id,
+            ranking=cached.ranking,
+            reason=cached.reason,
+            risks=cached.risks,
+            wait_tip=cached.wait_tip,
+            scores=[
+                ProductScore(
+                    wb_item_id=s.wb_item_id,
+                    value=s.value,
+                    trust=s.trust,
+                    risk=s.risk,
+                    availability=s.availability,
+                    overall=s.overall,
+                    target_price=s.target_price,
                 )
-            except Exception:
-                pass
-        await msg.answer(tx.COMPARE_ITEMS_FAILED)
-        return
+                for s in cached.scores
+            ],
+        )
+    else:
+        try:
+            result = await compare_products_with_llm(
+                products=products,
+                mode=compare_mode,
+                api_key=se.agentplatform_api_key,
+                model=se.agentplatform_compare_model,
+                api_base_url=se.agentplatform_base_url,
+                price_history=history,
+            )
+        except Exception:
+            logger.exception("Compare products failed")
+            # Refund the limit on error for non-admins
+            if not admin:
+                try:
+                    await FeatureUsageDailyRD.try_consume(
+                        redis,
+                        tg_user_id=user.tg_user_id,
+                        feature="compare",
+                        limit=9999,
+                        period="day",
+                    )
+                except Exception:
+                    pass
+            await msg.answer(tx.COMPARE_ITEMS_FAILED)
+            return
+
+        # ── Save to Redis cache ──────────────────────────────────────────────
+        try:
+            await WbCompareCacheRD(
+                item_ids_key=WbCompareCacheRD._ids_key(wb_ids_list),
+                mode=compare_mode,
+                winner_id=result.winner_id,
+                ranking=result.ranking,
+                reason=result.reason,
+                risks=result.risks or [],
+                wait_tip=result.wait_tip,
+                scores=[
+                    WbCompareScoreRD(
+                        wb_item_id=s.wb_item_id,
+                        value=s.value,
+                        trust=s.trust,
+                        risk=s.risk,
+                        availability=s.availability,
+                        overall=s.overall,
+                        target_price=s.target_price,
+                    )
+                    for s in result.scores
+                ],
+            ).save(redis)
+        except Exception:
+            logger.warning("Failed to save compare cache", exc_info=True)
 
     by_id = {p.wb_item_id: p for p in products}
     score_by_id = {s.wb_item_id: s for s in result.scores}
