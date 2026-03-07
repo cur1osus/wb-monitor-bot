@@ -895,10 +895,12 @@ async def search_similar_cheaper_title_only(
 
         expanded_limit = max(limit * 4, 20)
 
-        for template in SEARCH_WB_URLS:
-            for page in range(1, 4):
+        # Fast path for quick search in chat:
+        # use the newest endpoint version and fewer pages/retries.
+        for template in SEARCH_WB_URLS[:1]:
+            for page in range(1, 3):
                 url = template.format(page=page, query=query)
-                data = await _get_json_with_retries(s, url)
+                data = await _get_json_with_retries(s, url, timeout=8, retries=1)
                 if not isinstance(data, dict):
                     continue
 
