@@ -881,13 +881,14 @@ async def search_similar_cheaper_title_only(
     max_price: Decimal,
     exclude_wb_item_id: int,
     base_brand: str | None = None,
+    base_subject_id: int | None = None,
     match_percent_threshold: int | None = None,
     limit: int = 5,
     session: ClientSession | None = None,
 ) -> list[WbSimilarProduct]:
     # Title-only mode with lightweight tokenization:
-    # - query uses tokenized title only
-    # - no brand/entity/model/category/gender filtering
+    # - query prioritizes model/latin tokens for precision
+    # - optional subjectId filter removes cross-category noise
     # - only technical filters: exclude same item, require cheaper price
     if not base_title.strip() or limit <= 0:
         return []
@@ -898,13 +899,20 @@ async def search_similar_cheaper_title_only(
 
     tokens = _tokenize(base_title)
     brand_tokens = _tokenize(base_brand or "")
-    merged: list[str] = []
+
+    # Prioritize: model tokens (alphanumeric like "xtm-3000") and latin tokens
+    # first — they are the most disambiguating signals for WB search.
+    model_tokens = list(_extract_model_tokens(base_title))
+    latin_tokens = [t for t in tokens if not _is_cyrillic_token(t) and t not in model_tokens]
+    cyrillic_tokens = [t for t in tokens if _is_cyrillic_token(t)]
+
+    ordered: list[str] = []
     seen: set[str] = set()
-    for t in [*brand_tokens, *tokens]:
+    for t in [*brand_tokens, *model_tokens, *latin_tokens, *cyrillic_tokens]:
         if t and t not in seen:
-            merged.append(t)
+            ordered.append(t)
             seen.add(t)
-    query_text = " ".join(merged[:10]) if merged else base_title
+    query_text = " ".join(ordered[:10]) if ordered else base_title
 
     async def run(s: ClientSession) -> list[WbSimilarProduct]:
         query = quote_plus(query_text)
@@ -947,6 +955,15 @@ async def search_similar_cheaper_title_only(
                         continue
 
                     title = str(product.get("name") or product.get("imt_name") or f"WB #{nm_id}")
+
+                    # Filter by subjectId (WB category) if provided
+                    if base_subject_id is not None:
+                        candidate_subject_id = _parse_int(
+                            product.get("subjectId") or product.get("subjectID")
+                        )
+                        if candidate_subject_id is not None and candidate_subject_id != base_subject_id:
+                            continue
+
                     item = WbSimilarProduct(
                         wb_item_id=nm_id,
                         title=title,

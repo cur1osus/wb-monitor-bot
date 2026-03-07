@@ -234,6 +234,7 @@ async def _live_filter_cheaper_in_stock(
     *,
     current_price: Decimal,
     base_kind_id: int | None = None,
+    base_subject_id: int | None = None,
     base_brand: str | None = None,
     base_colors: list[str] | None = None,
     enforce_color: bool = True,
@@ -249,6 +250,7 @@ async def _live_filter_cheaper_in_stock(
         "no_snapshot_or_price": 0,
         "out_of_stock": 0,
         "not_cheaper": 0,
+        "subject_mismatch": 0,
         "kind_mismatch": 0,
         "color_mismatch": 0,
         "accepted": 0,
@@ -277,6 +279,15 @@ async def _live_filter_cheaper_in_stock(
             continue
         if require_cheaper and snap.price >= current_price:
             reason_counts["not_cheaper"] += 1
+            continue
+
+        # Category-level filter: subjectId is the most precise WB category signal
+        if (
+            base_subject_id is not None
+            and snap.subject_id is not None
+            and snap.subject_id != base_subject_id
+        ):
+            reason_counts["subject_mismatch"] += 1
             continue
 
         # Card-level gender/segment proxy from WB kindId
@@ -314,7 +325,7 @@ async def _live_filter_cheaper_in_stock(
 
     if log_prefix:
         logger.info(
-            "%s live-filter stats: total=%s accepted=%s fetch_error=%s no_snapshot_or_price=%s out_of_stock=%s not_cheaper=%s kind_mismatch=%s color_mismatch=%s",
+            "%s live-filter stats: total=%s accepted=%s fetch_error=%s no_snapshot_or_price=%s out_of_stock=%s not_cheaper=%s subject_mismatch=%s kind_mismatch=%s color_mismatch=%s",
             log_prefix,
             len(candidates),
             reason_counts["accepted"],
@@ -322,6 +333,7 @@ async def _live_filter_cheaper_in_stock(
             reason_counts["no_snapshot_or_price"],
             reason_counts["out_of_stock"],
             reason_counts["not_cheaper"],
+            reason_counts["subject_mismatch"],
             reason_counts["kind_mismatch"],
             reason_counts["color_mismatch"],
         )
@@ -1580,6 +1592,7 @@ async def wb_quick_searchmode_cb(
         found = await search_similar_cheaper_title_only(
             base_title=product.title,
             base_brand=product.brand,
+            base_subject_id=product.subject_id,
             match_percent_threshold=None,
             max_price=product.price if mode == "cheap" else Decimal("99999999"),
             exclude_wb_item_id=wb_item_id,
@@ -1590,6 +1603,7 @@ async def wb_quick_searchmode_cb(
             found,
             current_price=product.price,
             base_kind_id=product.kind_id,
+            base_subject_id=product.subject_id,
             base_brand=product.brand,
             base_colors=product.colors,
             enforce_color=True,
@@ -1604,6 +1618,7 @@ async def wb_quick_searchmode_cb(
                 found,
                 current_price=product.price,
                 base_kind_id=product.kind_id,
+                base_subject_id=product.subject_id,
                 base_brand=product.brand,
                 base_colors=product.colors,
                 enforce_color=False,
@@ -2229,6 +2244,7 @@ async def wb_find_cheaper_cb(
                 found = await search_similar_cheaper_title_only(
                     base_title=current.title or track.title,
                     base_brand=current.brand,
+                    base_subject_id=current.subject_id,
                     match_percent_threshold=cfg.cheap_match_percent,
                     max_price=current.price if mode == "cheap" else Decimal("99999999"),
                     exclude_wb_item_id=track.wb_item_id,
@@ -2240,6 +2256,7 @@ async def wb_find_cheaper_cb(
                         found,
                         current_price=current.price,
                         base_kind_id=current.kind_id,
+                        base_subject_id=current.subject_id,
                         base_brand=current.brand,
                         base_colors=current.colors,
                         enforce_color=True,
@@ -2253,6 +2270,7 @@ async def wb_find_cheaper_cb(
                             found,
                             current_price=current.price,
                             base_kind_id=current.kind_id,
+                            base_subject_id=current.subject_id,
                             base_brand=current.brand,
                             base_colors=current.colors,
                             enforce_color=False,
@@ -2266,6 +2284,7 @@ async def wb_find_cheaper_cb(
                             found,
                             current_price=current.price,
                             base_kind_id=current.kind_id,
+                            base_subject_id=current.subject_id,
                             base_brand=current.brand,
                             base_colors=current.colors,
                             enforce_color=False,
@@ -2289,6 +2308,9 @@ async def wb_find_cheaper_cb(
                             api_base_url=se.agentplatform_base_url,
                             base_title=current.title or track.title,
                             base_price=str(current.price),
+                            base_entity=current.entity,
+                            base_subject_id=current.subject_id,
+                            base_brand=current.brand,
                             candidates=live_confirmed,
                             limit=10,
                         )
@@ -2335,6 +2357,7 @@ async def wb_find_cheaper_cb(
                     live_input,
                     current_price=current.price,
                     base_kind_id=current.kind_id,
+                    base_subject_id=current.subject_id,
                     base_brand=current.brand,
                     base_colors=current.colors,
                     enforce_color=True,
@@ -2348,6 +2371,7 @@ async def wb_find_cheaper_cb(
                         live_input,
                         current_price=current.price,
                         base_kind_id=current.kind_id,
+                        base_subject_id=current.subject_id,
                         base_brand=current.brand,
                         base_colors=current.colors,
                         enforce_color=False,
@@ -2361,6 +2385,7 @@ async def wb_find_cheaper_cb(
                         live_input,
                         current_price=current.price,
                         base_kind_id=current.kind_id,
+                        base_subject_id=current.subject_id,
                         base_brand=current.brand,
                         base_colors=current.colors,
                         enforce_color=False,

@@ -25,6 +25,9 @@ async def rerank_similar_with_llm(
     api_base_url: str,
     base_title: str,
     base_price: str,
+    base_entity: str | None = None,
+    base_subject_id: int | None = None,
+    base_brand: str | None = None,
     candidates: list[WbSimilarProduct],
     limit: int = 10,
 ) -> list[WbSimilarProduct]:
@@ -38,8 +41,29 @@ async def rerank_similar_with_llm(
         return candidates[:limit]
 
     endpoint = _chat_completions_url(api_base_url)
+
+    base_meta: dict[str, object] = {"title": base_title, "price": base_price}
+    if base_entity:
+        base_meta["entity"] = base_entity
+    if base_subject_id is not None:
+        base_meta["subject_id"] = base_subject_id
+    if base_brand:
+        base_meta["brand"] = base_brand
+
+    subject_hint = (
+        f" Категория товара (subjectId={base_subject_id}) должна совпадать."
+        if base_subject_id is not None
+        else ""
+    )
+    entity_hint = f" Тип товара: '{base_entity}'." if base_entity else ""
+    brand_hint = (
+        f" Бренд базового товара: '{base_brand}' — аналоги других брендов допустимы."
+        if base_brand
+        else ""
+    )
+
     payload = {
-        "base": {"title": base_title, "price": base_price},
+        "base": base_meta,
         "candidates": [
             {
                 "id": c.wb_item_id,
@@ -50,10 +74,9 @@ async def rerank_similar_with_llm(
             for c in candidates
         ],
         "task": (
-            "Выбери только функциональные аналоги исходного товара. "
-            "Не включай товары из других типов/категорий. "
-            "Пол и цвет уже предварительно отфильтрованы по данным карточки WB; "
-            "дополнительно не пропускай очевидно нерелевантные варианты. "
+            f"Выбери только функциональные аналоги исходного товара.{entity_hint}{subject_hint}{brand_hint} "
+            "Строго исключи товары из других типов и категорий. "
+            "Пол и цвет уже предварительно отфильтрованы по данным карточки WB. "
             "Верни JSON формата: {\"picked\":[{\"id\":123,\"score\":0..100,\"reason\":\"...\"}]}. "
             "Сортируй picked по убыванию релевантности. Максимум 10."
         ),
