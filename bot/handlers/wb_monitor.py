@@ -3773,7 +3773,12 @@ async def wb_settings_sizes_toggle_cb(
         await cb.answer(tx.INVALID_PAGE, show_alert=True)
         return
 
-    selected = set(data.get("selected_sizes") or (track.watch_sizes or track.last_sizes or []))
+    selected_raw = data.get("selected_sizes", None)
+    if selected_raw is None:
+        selected = set(track.watch_sizes or track.last_sizes or [])
+    else:
+        selected = set(selected_raw)
+
     size = track.last_sizes[size_idx]
     if size in selected:
         selected.remove(size)
