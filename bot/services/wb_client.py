@@ -662,6 +662,7 @@ async def fetch_product(
                 in_stock=bool(cached.in_stock),
                 total_qty=cached.total_qty,
                 sizes=list(cached.sizes),
+                brand=cached.brand,
                 kind_id=None,
                 colors=None,
             )
@@ -1561,6 +1562,7 @@ async def _fetch_and_cache(
         in_stock=snap.in_stock,
         total_qty=snap.total_qty,
         sizes=snap.sizes,
+        brand=snap.brand,
     ).save(redis)
 
     return snap

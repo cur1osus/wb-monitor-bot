@@ -124,6 +124,7 @@ class WbItemCacheRD(_RDBase):
     in_stock: bool = False
     total_qty: int | None = None
     sizes: list[str] = []
+    brand: str | None = None
 
     @classmethod
     async def get(cls, redis: Redis, wb_item_id: int) -> "WbItemCacheRD | None":
