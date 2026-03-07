@@ -867,6 +867,7 @@ def _quick_item_kb(
 
 async def _quick_item_kb_with_usage(
     *,
+    session: AsyncSession,
     redis: "Redis",
     user_tg_id: int,
     user_plan: str,
@@ -1213,6 +1214,7 @@ async def wb_add_item_from_text(
     await msg.answer(
         text,
         reply_markup=await _quick_item_kb_with_usage(
+            session=session,
             redis=redis,
             user_tg_id=msg.from_user.id,
             user_plan=user.plan,
@@ -1248,6 +1250,7 @@ async def wb_quick_preview_cb(
     await cb.message.edit_text(
         _quick_preview_text(product=product, already_tracked=bool(existing)),
         reply_markup=await _quick_item_kb_with_usage(
+            session=session,
             redis=redis,
             user_tg_id=cb.from_user.id,
             user_plan=user.plan,
