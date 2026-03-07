@@ -3837,6 +3837,10 @@ async def wb_settings_sizes_clear_cb(
         await cb.answer(tx.SETTINGS_NO_SIZES, show_alert=True)
         return
 
+    # Сброс применяется сразу, без дополнительного подтверждения
+    track.watch_sizes = []
+    await session.commit()
+
     await state.update_data(track_id=track_id, selected_sizes=[])
     await cb.message.edit_text(
         _sizes_picker_text(set()),
