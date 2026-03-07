@@ -8,7 +8,7 @@ if TYPE_CHECKING:
     from bot.services.review_analysis import ReviewInsights
 
 
-TRACK_NOT_FOUND = "Трек не найден"
+TRACK_NOT_FOUND = "Товар не найден"
 NO_ACCESS = "❌ Нет доступа"
 SETTINGS_SUFFIX = "\n\n⚙️ Настройки:"
 
@@ -25,7 +25,7 @@ DASHBOARD_TEMPLATE = (
     "🔎 <b>WB Monitor</b>\n"
     "<blockquote>Отслеживание цен и наличия на Wildberries</blockquote>\n\n"
     "Тариф: <b>{plan_badge}</b>\n"
-    "Треков: <b>{used}</b> / {limit}\n"
+    "Товаров: <b>{used}</b> / {limit}\n"
     "Интервал проверок: каждые <b>{interval} мин</b>"
 )
 PLAN_BADGE_PRO = "⭐ PRO"
@@ -114,7 +114,7 @@ COMPARE_ACCESS_DENIED = "🔒 Сравнение товаров доступно
 COMPARE_LIMIT_REACHED = "⏳ Лимит сравнений на сегодня исчерпан (2/2). Попробуйте завтра."
 WB_LINK_PARSE_ERROR = "❌ Не удалось распознать ссылку WB. Отправьте корректную ссылку."
 TRACK_ALREADY_EXISTS = "⚠️ Вы уже отслеживаете этот товар."
-TRACK_LIMIT_REACHED = "❌ Достигнут лимит треков ({limit}). Обновитесь до Pro!"
+TRACK_LIMIT_REACHED = "❌ Достигнут лимит товаров ({limit}). Обновитесь до Pro!"
 PRODUCT_FETCH_ERROR = "❌ Не удалось получить данные о товаре. Проверьте ссылку."
 TRACK_ADDED_TEMPLATE = (
     "✅ Товар добавлен в отслеживание!\n\n"
@@ -132,17 +132,17 @@ TRACK_ADDED_RATING_UNKNOWN = "не указан"
 TRACK_ADDED_IN_STOCK_YES = "да"
 TRACK_ADDED_IN_STOCK_NO = "нет"
 TRACK_ADDED_FIND_CHEAPER_BTN = "🔎 Поиск"
-TRACK_ADDED_MY_TRACKS_BTN = "📦 Мои треки"
+TRACK_ADDED_MY_TRACKS_BTN = "📦 Мои товары"
 TRACK_ADDED_BACK_MENU_BTN = "◀ В меню"
 QUICK_ADD_BTN = "➕ Добавить в товары"
 QUICK_REVIEWS_BTN = "🧠 Проанализировать отзывы"
 QUICK_SEARCH_BTN = "🔎 Найти"
 QUICK_ALREADY_TRACKED = "ℹ️ Этот товар уже есть в твоих отслеживаемых."
-NO_ACTIVE_TRACKS = "У вас нет активных треков"
+NO_ACTIVE_TRACKS = "У вас нет активных товаров"
 INVALID_PAGE = "Недействительная страница"
 REMOVE_CONFIRM = "Подтвердите удаление"
 REMOVE_CANCELLED = "Удаление отменено"
-TRACK_DELETED = "Трек удален"
+TRACK_DELETED = "Товар удален"
 
 FIND_CHEAPER_TO_LIST_BTN = "◀️ К товару"
 SEARCH_MODE_PROMPT = "Выбери режим поиска:"
@@ -175,7 +175,7 @@ REVIEWS_ANALYSIS_NO_REVIEWS = (
 PLAN_TEXT = (
     "💳 <b>Текущий тариф: {plan}</b>\n\n"
     "Лимиты тарифа:\n"
-    "• 📦 Треков: <b>{tracks_limit}</b> (используется {tracks_used})\n"
+    "• 📦 Товаров: <b>{tracks_limit}</b> (используется {tracks_used})\n"
     "• ⏱ Интервал проверок: <b>{interval} мин</b>\n"
     "• 🔎 Поиск товаров осталось: {cheap_left}\n"
     "• 🧠 Анализ отзывов осталось: {reviews_left}"
@@ -187,7 +187,7 @@ PLAN_OFFER_TEXT = (
     "💎 <b>{title}</b>\n\n"
     "Условия:\n"
     "• Срок: <b>{days} дней</b>\n"
-    "• 📦 Треков: <b>{tracks_limit}</b>\n"
+    "• 📦 Товаров: <b>{tracks_limit}</b>\n"
     "• ⏱ Интервал проверок: <b>{interval} мин</b>\n"
     "• 🔎 Поиск товаров {cheap_period}: <b>{cheap_limit}</b>\n"
     "• 🧠 Анализ отзывов {reviews_period}: <b>{reviews_limit}</b>\n\n"
@@ -205,7 +205,7 @@ PAYMENT_METHOD_CHOICE = (
     "💳 <b>Выберите способ оплаты</b>\n\n"
     "Pro даёт:\n"
     "• Проверки каждые 60 мин (вместо 6 часов)\n"
-    "• До 50 треков (вместо 5)\n"
+    "• До 50 товаров (вместо 10)\n"
     "• Отслеживание остатков\n"
     "• Увеличенные лимиты AI"
 )
@@ -236,7 +236,7 @@ ADMIN_STATS_TEXT = (
     "Период: <b>{days} {days_word}</b>\n\n"
     "👥 Пользователи: <b>{total_users}</b> (новых: +{new_users})\n"
     "⭐ PRO активных: <b>{pro_users}</b>\n"
-    "📦 Треки: <b>{total_tracks}</b> (активных: {active_tracks}, новых: +{new_tracks})\n"
+    "📦 Товары: <b>{total_tracks}</b> (активных: {active_tracks}, новых: +{new_tracks})\n"
     "🔁 Проверок: <b>{checks_count}</b>\n"
     "🔔 Уведомлений: <b>{alerts_count}</b>\n"
     "🔎 Поисков дешевле: <b>{cheap_scans_count}</b>\n"
@@ -420,11 +420,11 @@ START_REF_LINKED = "✅ Вы подключены по реферальной с
 
 WORKER_EVENTS: dict[str, str] = {
     "price_changed": "💰 Цена изменилась: {old} ₽ → {new} ₽",
-    "in_stock": "✅ Товар снова в наличии (track: {track_id})",
+    "in_stock": "✅ Товар снова в наличии (Товар: {track_id})",
     "stock_changed": "📦 Остаток изменился {direction}: {old} → {new}",
     "sizes_appeared": "📏 Появились размеры: {sizes}",
     "sizes_gone": "📏 Исчезли размеры: {sizes}",
-    "paused_error": "⚠️ Трек #{id} поставлен на паузу из-за ошибок.\n{title}",
+    "paused_error": "⚠️ Товар #{id} поставлен на паузу из-за ошибок.\n{title}",
 }
 WORKER_NOTIFY_TEMPLATE = "🔔 <b>{title}</b>\n{event}\n{url}"
 
