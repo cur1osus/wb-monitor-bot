@@ -598,11 +598,10 @@ def dashboard_text(
     limit: int,
     interval: int,
 ) -> str:
-    # Меняем подсказку автоматически раз в 30 минут.
-    from datetime import datetime
+    # Меняем подсказку на каждый заход на главный экран.
+    from random import choice
 
-    hint_idx = int(datetime.now().timestamp() // 1800) % len(DASHBOARD_HINTS)
-    hint = DASHBOARD_HINTS[hint_idx]
+    hint = choice(DASHBOARD_HINTS)
 
     return DASHBOARD_TEMPLATE.format(
         plan_badge=plan_badge,
