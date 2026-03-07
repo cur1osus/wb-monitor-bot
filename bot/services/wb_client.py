@@ -164,6 +164,11 @@ _MENU_CACHE_TTL_SEC = 6 * 60 * 60
 _MENU_CACHE: list["WbCatalogCategory"] | None = None
 _MENU_CACHE_TS = 0.0
 WB_HTTP_PROXY = os.environ.get("WB_HTTP_PROXY", "").strip() or None
+WB_HTTP_PROXIES = [
+    item.strip()
+    for item in os.environ.get("WB_HTTP_PROXIES", "").split(",")
+    if item.strip()
+]
 _MORPH = MorphAnalyzer() if MorphAnalyzer is not None else None
 
 _WEB_SEARCH_URL = "https://duckduckgo.com/html/?q={query}"
@@ -515,6 +520,23 @@ def _extract_products_from_search_payload(data: object) -> list[dict[str, object
     return []
 
 
+def _proxy_candidates() -> list[str | None]:
+    candidates: list[str | None] = [None]  # сначала пробуем напрямую
+    for proxy in WB_HTTP_PROXIES:
+        if proxy and proxy not in candidates:
+            candidates.append(proxy)
+    if WB_HTTP_PROXY and WB_HTTP_PROXY not in candidates:
+        candidates.append(WB_HTTP_PROXY)
+    return candidates
+
+
+def _proxy_for_attempt(attempt: int) -> str | None:
+    proxies = _proxy_candidates()
+    if not proxies:
+        return None
+    return proxies[attempt % len(proxies)]
+
+
 async def _get_json_with_retries(
     session: ClientSession,
     url: str,
@@ -524,7 +546,8 @@ async def _get_json_with_retries(
 ) -> object | None:
     for attempt in range(retries + 1):
         try:
-            async with session.get(url, timeout=timeout, proxy=WB_HTTP_PROXY) as resp:
+            proxy = _proxy_for_attempt(attempt)
+            async with session.get(url, timeout=timeout, proxy=proxy) as resp:
                 if resp.status == 200:
                     data = await resp.json(content_type=None)
                     if isinstance(data, (dict, list)):
@@ -696,12 +719,16 @@ async def _web_search_candidate_ids(
     if not q:
         return []
     url = _WEB_SEARCH_URL.format(query=q)
-    try:
-        async with session.get(url, timeout=12, proxy=WB_HTTP_PROXY) as resp:
-            if resp.status != 200:
-                return []
-            html_text = await resp.text()
-    except Exception:
+    for proxy in _proxy_candidates():
+        try:
+            async with session.get(url, timeout=12, proxy=proxy) as resp:
+                if resp.status != 200:
+                    continue
+                html_text = await resp.text()
+                break
+        except Exception:
+            continue
+    else:
         return []
     ids = _extract_web_candidate_ids(html_text)
     return ids[: max(1, limit)]
@@ -1437,10 +1464,19 @@ async def _fetch_and_cache(
     url: str,
     wb_item_id: int,
 ) -> WbProductSnapshot | None:
-    async with session.get(url, timeout=20, proxy=WB_HTTP_PROXY) as resp:
-        if resp.status != 200:
-            return None
-        data = await resp.json(content_type=None)
+    data = None
+    for proxy in _proxy_candidates():
+        try:
+            async with session.get(url, timeout=20, proxy=proxy) as resp:
+                if resp.status != 200:
+                    continue
+                data = await resp.json(content_type=None)
+                break
+        except Exception:
+            continue
+
+    if not isinstance(data, dict):
+        return None
 
     products = data.get("products") or data.get("data", {}).get("products", [])
     if not products:
