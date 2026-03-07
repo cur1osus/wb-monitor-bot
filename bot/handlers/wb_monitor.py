@@ -1524,7 +1524,21 @@ async def wb_quick_searchmode_cb(
             enforce_color=True,
             require_cheaper=(mode == "cheap"),
             limit=10,
+            log_prefix=f"quick_id={wb_item_id} mode={mode} stage=search",
         )
+        if mode == "cheap" and not live_confirmed:
+            # Fallback: если по строгому совпадению цвета пусто — пробуем без цветового фильтра.
+            live_confirmed = await _live_filter_cheaper_in_stock(
+                redis,
+                found,
+                current_price=product.price,
+                base_kind_id=product.kind_id,
+                base_colors=product.colors,
+                enforce_color=False,
+                require_cheaper=True,
+                limit=10,
+                log_prefix=f"quick_id={wb_item_id} mode={mode} stage=search_color_relaxed",
+            )
         live_confirmed = _filter_candidates_by_numeric_tokens(
             base_title=product.title,
             candidates=live_confirmed,
@@ -2131,6 +2145,18 @@ async def wb_find_cheaper_cb(
                         limit=20,
                         log_prefix=f"track_id={track.id} mode={mode} stage=search",
                     )
+                    if mode == "cheap" and not live_confirmed:
+                        live_confirmed = await _live_filter_cheaper_in_stock(
+                            redis,
+                            found,
+                            current_price=current.price,
+                            base_kind_id=current.kind_id,
+                            base_colors=current.colors,
+                            enforce_color=False,
+                            require_cheaper=True,
+                            limit=20,
+                            log_prefix=f"track_id={track.id} mode={mode} stage=search_color_relaxed",
+                        )
                     if mode == "similar" and len(live_confirmed) < 3:
                         relaxed = await _live_filter_cheaper_in_stock(
                             redis,
@@ -2201,6 +2227,18 @@ async def wb_find_cheaper_cb(
                     limit=10,
                     log_prefix=f"track_id={track.id} mode={mode} stage=final",
                 )
+                if mode == "cheap" and not live_confirmed:
+                    live_confirmed = await _live_filter_cheaper_in_stock(
+                        redis,
+                        live_input,
+                        current_price=current.price,
+                        base_kind_id=current.kind_id,
+                        base_colors=current.colors,
+                        enforce_color=False,
+                        require_cheaper=True,
+                        limit=10,
+                        log_prefix=f"track_id={track.id} mode={mode} stage=final_color_relaxed",
+                    )
                 if mode == "similar" and len(live_confirmed) < 3:
                     relaxed_final = await _live_filter_cheaper_in_stock(
                         redis,
