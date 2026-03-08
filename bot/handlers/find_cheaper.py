@@ -115,6 +115,7 @@ async def wb_find_cheaper_cb(cb: CallbackQuery, session: "AsyncSession", redis: 
     cfg = runtime_config_view(await get_runtime_config(session))
     color_relaxed = False
     cached = await WbSimilarSearchCacheRD.get(redis, track.id, mode=mode)
+    base_brand: str | None = None
     if cached is None or cached.match_percent != cfg.cheap_match_percent:
         user = await get_or_create_monitor_user(session, cb.from_user.id, cb.from_user.username)
         period = _feature_period(user.plan)
@@ -151,6 +152,7 @@ async def wb_find_cheaper_cb(cb: CallbackQuery, session: "AsyncSession", redis: 
             if not current or current.price is None:
                 await cb.message.edit_text(tx.FIND_CHEAPER_PRICE_ERROR, reply_markup=back_kb)
                 return
+            base_brand = _normalize_brand(current.brand)
 
             if _WB_ENABLE_SELENIUM_SIMILAR:
                 try:
@@ -319,7 +321,6 @@ async def wb_find_cheaper_cb(cb: CallbackQuery, session: "AsyncSession", redis: 
             lines.append("ℹ️ Дешевле не нашлось — показываю ближайшие похожие по цене.")
             lines.append("")
 
-    base_brand = _normalize_brand(getattr(current, "brand", None) if "current" in dir() else None)
     alternatives = sorted(
         alternatives,
         key=lambda item: (
