@@ -46,7 +46,11 @@ from bot.services.wb_client import (
     fetch_product,
     search_similar_cheaper_title_only,
 )
-from bot.services.wb_similar_selenium import fetch_similar_products
+
+try:
+    from bot.services.wb_similar_selenium import fetch_similar_products
+except ModuleNotFoundError:  # optional dependency on server
+    fetch_similar_products = None
 from bot.services.similar_filter import (
     _live_filter_cheaper_in_stock,
     _filter_candidates_by_numeric_tokens,
@@ -188,7 +192,7 @@ async def wb_find_cheaper_cb(
                 return
             base_brand = _normalize_brand(current.brand)
 
-            if _WB_ENABLE_SELENIUM_SIMILAR:
+            if _WB_ENABLE_SELENIUM_SIMILAR and fetch_similar_products is not None:
                 try:
                     selenium_items = await asyncio.to_thread(
                         fetch_similar_products,
@@ -200,6 +204,11 @@ async def wb_find_cheaper_cb(
                 except Exception:
                     logger.exception("Selenium similar parser failed")
                     selenium_items = []
+            elif _WB_ENABLE_SELENIUM_SIMILAR:
+                logger.warning(
+                    "Selenium similar parser enabled, but selenium dependency is unavailable"
+                )
+                selenium_items = []
             else:
                 selenium_items = []
 
