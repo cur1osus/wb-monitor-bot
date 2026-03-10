@@ -24,6 +24,8 @@ from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
+from bot.enums import FeatureName, FeaturePeriod, UserPlan
+
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
     from bot.db.models import MonitorUserModel
@@ -67,7 +69,7 @@ class MonitorUserRD(_RDBase):
     username: str | None = None
     first_name: str | None = None
     last_name: str | None = None
-    plan: str = "free"
+    plan: str = UserPlan.FREE.value
     pro_expires_at: str | None = None  # ISO-формат datetime
     referral_code: str | None = None
     referred_by_tg_user_id: int | None = None
@@ -102,7 +104,7 @@ class MonitorUserRD(_RDBase):
 
     # ── удобные свойства ──────────────────────────────────────────────────────
     def is_pro(self) -> bool:
-        if self.plan not in {"pro", "pro_plus"}:
+        if self.plan not in {UserPlan.PRO.value, UserPlan.PRO_PLUS.value}:
             return False
         if self.pro_expires_at:
             return datetime.fromisoformat(self.pro_expires_at) > datetime.utcnow()  # noqa: DTZ003
@@ -374,8 +376,11 @@ class FeatureUsageDailyRD:
     """Счетчик обращений к тяжелым фичам по дням/месяцам (UTC)."""
 
     @staticmethod
-    def _key(*, tg_user_id: int, feature: str, window_key: str) -> str:
-        return f"FeatureUsageDailyRD:{feature}:{tg_user_id}:{window_key}"
+    def _key(*, tg_user_id: int, feature: FeatureName | str, window_key: str) -> str:
+        feature_value = (
+            feature.value if isinstance(feature, FeatureName) else str(feature)
+        )
+        return f"FeatureUsageDailyRD:{feature_value}:{tg_user_id}:{window_key}"
 
     @staticmethod
     def _day_key(now: datetime) -> str:
@@ -419,8 +424,16 @@ class FeatureUsageDailyRD:
         return max(1, int((next_month - now).total_seconds()))
 
     @classmethod
-    def _window_params(cls, *, now: datetime, period: str) -> tuple[str, int]:
-        if period == "month":
+    def _window_params(
+        cls,
+        *,
+        now: datetime,
+        period: FeaturePeriod | str,
+    ) -> tuple[str, int]:
+        period_value = (
+            period.value if isinstance(period, FeaturePeriod) else str(period)
+        )
+        if period_value == FeaturePeriod.MONTH.value:
             return cls._month_key(now), cls._ttl_until_month_end(now)
         return cls._day_key(now), cls._ttl_until_day_end(now)
 
@@ -430,12 +443,15 @@ class FeatureUsageDailyRD:
         redis: Redis,
         *,
         tg_user_id: int,
-        feature: str,
+        feature: FeatureName | str,
         limit: int,
-        period: str = "day",
+        period: FeaturePeriod | str = FeaturePeriod.DAY,
         session: "AsyncSession | None" = None,
     ) -> tuple[bool, int]:
         now = datetime.now(UTC).replace(tzinfo=None)
+        period_value = (
+            period.value if isinstance(period, FeaturePeriod) else str(period)
+        )
         window_key, ttl = cls._window_params(now=now, period=period)
         key = cls._key(tg_user_id=tg_user_id, feature=feature, window_key=window_key)
 
@@ -455,7 +471,7 @@ class FeatureUsageDailyRD:
             .values(
                 tg_user_id=tg_user_id,
                 feature=feature,
-                period=period,
+                period=period_value,
                 window_key=window_key,
                 used=1,
                 updated_at=now,
@@ -477,7 +493,7 @@ class FeatureUsageDailyRD:
                 .values(
                     tg_user_id=tg_user_id,
                     feature=feature,
-                    period=period,
+                    period=period_value,
                     window_key=window_key,
                     used=0,
                     updated_at=now,
@@ -497,7 +513,7 @@ class FeatureUsageDailyRD:
                 select(FeatureUsageModel.used).where(
                     FeatureUsageModel.tg_user_id == tg_user_id,
                     FeatureUsageModel.feature == feature,
-                    FeatureUsageModel.period == period,
+                    FeatureUsageModel.period == period_value,
                     FeatureUsageModel.window_key == window_key,
                 )
             )
@@ -515,11 +531,14 @@ class FeatureUsageDailyRD:
         redis: Redis,
         *,
         tg_user_id: int,
-        feature: str,
-        period: str = "day",
+        feature: FeatureName | str,
+        period: FeaturePeriod | str = FeaturePeriod.DAY,
         session: "AsyncSession | None" = None,
     ) -> int:
         now = datetime.now(UTC).replace(tzinfo=None)
+        period_value = (
+            period.value if isinstance(period, FeaturePeriod) else str(period)
+        )
         window_key, ttl = cls._window_params(now=now, period=period)
         key = cls._key(tg_user_id=tg_user_id, feature=feature, window_key=window_key)
         raw = await redis.get(key)
@@ -538,10 +557,70 @@ class FeatureUsageDailyRD:
             select(FeatureUsageModel.used).where(
                 FeatureUsageModel.tg_user_id == tg_user_id,
                 FeatureUsageModel.feature == feature,
-                FeatureUsageModel.period == period,
+                FeatureUsageModel.period == period_value,
                 FeatureUsageModel.window_key == window_key,
             )
         )
         value = int(used or 0)
+        await redis.setex(key, ttl, str(value))
+        return value
+
+    @classmethod
+    async def refund(
+        cls,
+        redis: Redis,
+        *,
+        tg_user_id: int,
+        feature: FeatureName | str,
+        period: FeaturePeriod | str = FeaturePeriod.DAY,
+        session: "AsyncSession | None" = None,
+    ) -> int:
+        now = datetime.now(UTC).replace(tzinfo=None)
+        period_value = (
+            period.value if isinstance(period, FeaturePeriod) else str(period)
+        )
+        window_key, ttl = cls._window_params(now=now, period=period)
+        key = cls._key(tg_user_id=tg_user_id, feature=feature, window_key=window_key)
+
+        if session is None:
+            raw = await redis.get(key)
+            try:
+                used_now = int(raw or 0)
+            except (TypeError, ValueError):
+                used_now = 0
+            value = max(0, used_now - 1)
+            await redis.setex(key, ttl, str(value))
+            return value
+
+        from bot.db.models import FeatureUsageModel
+
+        current_used = await session.scalar(
+            select(FeatureUsageModel.used).where(
+                FeatureUsageModel.tg_user_id == tg_user_id,
+                FeatureUsageModel.feature == feature,
+                FeatureUsageModel.period == period_value,
+                FeatureUsageModel.window_key == window_key,
+            )
+        )
+        value = max(0, int(current_used or 0) - 1)
+        await session.execute(
+            pg_insert(FeatureUsageModel)
+            .values(
+                tg_user_id=tg_user_id,
+                feature=feature,
+                period=period_value,
+                window_key=window_key,
+                used=value,
+                updated_at=now,
+            )
+            .on_conflict_do_update(
+                constraint="uq_monitor_feature_usage_window",
+                set_={
+                    "used": value,
+                    "updated_at": now,
+                },
+            )
+        )
+        await session.commit()
         await redis.setex(key, ttl, str(value))
         return value

@@ -10,37 +10,55 @@ from html import escape as escape_html
 
 from aiohttp import ClientSession
 
+from bot.enums import CompareMode
 from bot.services.wb_client import WB_HTTP_HEADERS, WB_HTTP_PROXY, WbProductSnapshot
 
 logger = logging.getLogger(__name__)
 
-_COMPARE_MODES = {"cheap", "quality", "gift", "safe", "balanced"}
+_COMPARE_MODES = {
+    CompareMode.CHEAP,
+    CompareMode.QUALITY,
+    CompareMode.GIFT,
+    CompareMode.SAFE,
+    CompareMode.BALANCED,
+}
 
 
-def _mode_prompt(mode: str) -> str:
+def normalize_compare_mode(mode: CompareMode | str | None) -> CompareMode:
+    if isinstance(mode, CompareMode):
+        return mode
+    raw_mode = (mode or CompareMode.BALANCED.value).strip().lower()
+    try:
+        return CompareMode(raw_mode)
+    except ValueError:
+        return CompareMode.BALANCED
+
+
+def _mode_prompt(mode: CompareMode) -> str:
     prompts = {
-        "cheap": (
+        CompareMode.CHEAP: (
             "Приоритет — минимальная цена при приемлемом качестве. "
             "Если разница в качестве несущественная, выбирай более дешевый вариант."
         ),
-        "quality": (
+        CompareMode.QUALITY: (
             "Приоритет — качество и надежность. "
             "Ориентируйся на рейтинг, стабильность отзывов, низкий риск и репутацию."
         ),
-        "gift": (
+        CompareMode.GIFT: (
             "Приоритет — товар, который не стыдно подарить: "
             "стабильное качество, низкий риск негатива, хорошая презентабельность и наличие. "
             "Не выбирай только из-за самой низкой цены."
         ),
-        "safe": (
+        CompareMode.SAFE: (
             "Приоритет — минимальный риск неудачной покупки: "
             "надежные отзывы, меньше критичных жалоб, предсказуемое качество и наличие."
         ),
-        "balanced": (
+        CompareMode.BALANCED: (
             "Сбалансируй цену, качество, риск и наличие без перекоса в один фактор."
         ),
     }
-    return prompts.get(mode, prompts["balanced"])
+    return prompts.get(mode, prompts[CompareMode.BALANCED])
+
 
 _CRIT_RE = re.compile(
     r"брак|слом|трещ|плох|ужас|возврат|не рекоменд|отвал|разочар|small|маломер|большемер",
@@ -72,21 +90,24 @@ class CompareResult:
 async def compare_products_with_llm(
     *,
     products: list[WbProductSnapshot],
-    mode: str,
+    mode: CompareMode | str,
     api_key: str,
     model: str,
     api_base_url: str,
     price_history: dict[int, dict[str, float | int | None]] | None = None,
 ) -> CompareResult:
-    mode = (mode or "balanced").strip().lower()
-    if mode not in _COMPARE_MODES:
-        mode = "balanced"
+    compare_mode = normalize_compare_mode(mode)
 
     if len(products) < 2:
         raise ValueError("Need at least 2 products")
 
     review_signals = await _fetch_review_signals_many([p.wb_item_id for p in products])
-    det = _deterministic_compare(products, mode=mode, history=price_history or {}, review_signals=review_signals)
+    det = _deterministic_compare(
+        products,
+        mode=compare_mode,
+        history=price_history or {},
+        review_signals=review_signals,
+    )
 
     api_key = (api_key or "").strip()
     model = (model or "").strip()
@@ -94,10 +115,10 @@ async def compare_products_with_llm(
         return det
 
     endpoint = _chat_completions_url(api_base_url)
-    mode_prompt = _mode_prompt(mode)
+    mode_prompt = _mode_prompt(compare_mode)
 
     payload = {
-        "mode": mode,
+        "mode": compare_mode.value,
         "mode_instruction": mode_prompt,
         "scoring_facts": [
             {
@@ -144,7 +165,7 @@ async def compare_products_with_llm(
                 "role": "system",
                 "content": (
                     "Ты аналитик WB. Отвечай строго JSON без markdown. "
-                    f"Режим сравнения: {mode}. {mode_prompt}"
+                    f"Режим сравнения: {compare_mode.value}. {mode_prompt}"
                 ),
             },
             {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
@@ -195,7 +216,7 @@ async def compare_products_with_llm(
 def _deterministic_compare(
     products: list[WbProductSnapshot],
     *,
-    mode: str,
+    mode: CompareMode,
     history: dict[int, dict[str, float | int | None]],
     review_signals: dict[int, dict[str, float | int]],
 ) -> CompareResult:
@@ -204,11 +225,11 @@ def _deterministic_compare(
     max_price = max(prices) if prices else 0.0
 
     weights = {
-        "cheap": (0.5, 0.15, 0.2, 0.15),
-        "quality": (0.2, 0.35, 0.3, 0.15),
-        "gift": (0.2, 0.3, 0.2, 0.3),
-        "safe": (0.15, 0.35, 0.35, 0.15),
-        "balanced": (0.3, 0.25, 0.25, 0.2),
+        CompareMode.CHEAP: (0.5, 0.15, 0.2, 0.15),
+        CompareMode.QUALITY: (0.2, 0.35, 0.3, 0.15),
+        CompareMode.GIFT: (0.2, 0.3, 0.2, 0.3),
+        CompareMode.SAFE: (0.15, 0.35, 0.35, 0.15),
+        CompareMode.BALANCED: (0.3, 0.25, 0.25, 0.2),
     }[mode]
 
     scores: list[ProductScore] = []
@@ -222,20 +243,40 @@ def _deterministic_compare(
         rating = float(p.rating or 0)
         reviews = int(p.reviews or 0)
         rev_norm = min(100.0, math.log10(reviews + 1) * 35.0)
-        value = int(max(0, min(100, round(price_part * 0.6 + rating * 8 + rev_norm * 0.2))))
+        value = int(
+            max(0, min(100, round(price_part * 0.6 + rating * 8 + rev_norm * 0.2)))
+        )
 
         rs = review_signals.get(p.wb_item_id, {})
         stability = float(rs.get("stability", 50.0))
         critical_share = float(rs.get("critical_share", 0.0))
         trust = int(max(0, min(100, round(rev_norm * 0.6 + stability * 0.4))))
-        risk = int(max(0, min(100, round(100 - (critical_share * 100 * 0.7 + rating * 10 * 0.3)))))
+        risk = int(
+            max(
+                0,
+                min(100, round(100 - (critical_share * 100 * 0.7 + rating * 10 * 0.3))),
+            )
+        )
 
         qty = int(p.total_qty or 0)
         sizes_count = len(p.sizes or [])
         availability = 100 if p.in_stock else 0
-        availability = int(max(0, min(100, availability * 0.65 + min(30, qty / 3) + min(20, sizes_count * 3))))
+        availability = int(
+            max(
+                0,
+                min(
+                    100,
+                    availability * 0.65 + min(30, qty / 3) + min(20, sizes_count * 3),
+                ),
+            )
+        )
 
-        overall_f = value * weights[0] + trust * weights[1] + (100 - risk) * weights[2] + availability * weights[3]
+        overall_f = (
+            value * weights[0]
+            + trust * weights[1]
+            + (100 - risk) * weights[2]
+            + availability * weights[3]
+        )
 
         # Для режима "подарок" не должны побеждать только за счет минимальной цены.
         # Добавляем бонус за "надежное качество" и легкий штраф за крайние ценовые позиции.
@@ -291,9 +332,13 @@ def _deterministic_compare(
             prod = next((p for p in products if p.wb_item_id == s.wb_item_id), None)
             if prod:
                 current = float(prod.price) if prod.price is not None else None
-                label = escape_html(prod.title[:40]) if prod.title else str(s.wb_item_id)
+                label = (
+                    escape_html(prod.title[:40]) if prod.title else str(s.wb_item_id)
+                )
                 if current is not None and s.target_price < current:
-                    wait_tips.append(f"{label}: мин. {s.target_price}₽ (сейчас {int(current)}₽)")
+                    wait_tips.append(
+                        f"{label}: мин. {s.target_price}₽ (сейчас {int(current)}₽)"
+                    )
                 else:
                     wait_tips.append(f"{label}: ист. мин. {s.target_price}₽")
 
@@ -314,7 +359,9 @@ def _deterministic_compare(
     )
 
 
-async def _fetch_review_signals_many(wb_item_ids: list[int]) -> dict[int, dict[str, float | int]]:
+async def _fetch_review_signals_many(
+    wb_item_ids: list[int],
+) -> dict[int, dict[str, float | int]]:
     results = await asyncio.gather(
         *(_fetch_review_signals(nm) for nm in wb_item_ids),
         return_exceptions=True,

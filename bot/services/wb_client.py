@@ -808,7 +808,9 @@ async def search_similar_cheaper_via_web(
     base_core_tokens = {
         token
         for token in base_tokens
-        if len(token) >= 5 and token not in base_type_tokens and token not in base_brand_tokens
+        if len(token) >= 5
+        and token not in base_type_tokens
+        and token not in base_brand_tokens
     }
     if not base_core_tokens:
         base_core_tokens = {token for token in base_anchor_tokens if len(token) >= 5}
@@ -828,7 +830,9 @@ async def search_similar_cheaper_via_web(
         ids1, ids2, ids3 = await asyncio.gather(
             _web_search_candidate_ids(session, query_text=q1, limit=candidate_limit),
             _web_search_candidate_ids(session, query_text=q2, limit=candidate_limit),
-            _web_search_candidate_ids(session, query_text=q3, limit=max(10, candidate_limit // 2)),
+            _web_search_candidate_ids(
+                session, query_text=q3, limit=max(10, candidate_limit // 2)
+            ),
         )
 
     ordered_ids: list[int] = []
@@ -856,7 +860,11 @@ async def search_similar_cheaper_via_web(
     for nm_id, snap in snapshots:
         if snap is None or snap.price is None or snap.price >= max_price:
             continue
-        if base_subject_id is not None and snap.subject_id is not None and snap.subject_id != base_subject_id:
+        if (
+            base_subject_id is not None
+            and snap.subject_id is not None
+            and snap.subject_id != base_subject_id
+        ):
             continue
 
         candidate_text = f"{snap.title} {snap.entity or ''}"
@@ -864,22 +872,32 @@ async def search_similar_cheaper_via_web(
 
         if not _is_ecosystem_compatible(base_ecosystem, candidate_tokens):
             continue
-        if base_model_tokens and not _model_tokens_compatible(base_model_tokens, candidate_text, candidate_tokens):
+        if base_model_tokens and not _model_tokens_compatible(
+            base_model_tokens, candidate_text, candidate_tokens
+        ):
             continue
         if base_brand_tokens:
             cand_brand_tokens = set(_tokenize(snap.brand or ""))
-            if cand_brand_tokens and _match_count(base_brand_tokens, cand_brand_tokens) == 0:
+            if (
+                cand_brand_tokens
+                and _match_count(base_brand_tokens, cand_brand_tokens) == 0
+            ):
                 continue
         anchor_hits = _match_count(base_anchor_tokens, candidate_tokens)
         if required_anchor_matches > 0 and anchor_hits < required_anchor_matches:
             continue
         if base_type_tokens and _match_count(base_type_tokens, candidate_tokens) == 0:
             continue
-        if min_match_percent > 0 and _match_percent(base_tokens, candidate_tokens) < min_match_percent:
+        if (
+            min_match_percent > 0
+            and _match_percent(base_tokens, candidate_tokens) < min_match_percent
+        ):
             continue
 
         # Strong guard against unrelated SERP noise (e.g. flower pots for markers).
-        core_hits = _match_count(base_core_tokens, candidate_tokens) if base_core_tokens else 0
+        core_hits = (
+            _match_count(base_core_tokens, candidate_tokens) if base_core_tokens else 0
+        )
         if base_core_tokens and core_hits == 0:
             continue
         if anchor_hits == 0 and core_hits < 2:
@@ -929,7 +947,9 @@ async def search_similar_cheaper_title_only(
     combined_for_model = f"{base_title} {base_brand or ''}".strip()
     model_tokens = list(_extract_model_tokens(combined_for_model))
     all_tokens = tokens + [t for t in brand_tokens if t not in set(tokens)]
-    latin_tokens = [t for t in all_tokens if not _is_cyrillic_token(t) and t not in model_tokens]
+    latin_tokens = [
+        t for t in all_tokens if not _is_cyrillic_token(t) and t not in model_tokens
+    ]
     cyrillic_tokens = [t for t in all_tokens if _is_cyrillic_token(t)]
 
     ordered: list[str] = []
@@ -944,7 +964,11 @@ async def search_similar_cheaper_title_only(
     no_brand_ordered: list[str] = []
     no_brand_seen: set[str] = set()
     brand_token_set = set(brand_tokens)
-    for t in [*model_tokens, *[t for t in latin_tokens if t not in brand_token_set], *cyrillic_tokens]:
+    for t in [
+        *model_tokens,
+        *[t for t in latin_tokens if t not in brand_token_set],
+        *cyrillic_tokens,
+    ]:
         if t and t not in no_brand_seen:
             no_brand_ordered.append(t)
             no_brand_seen.add(t)
@@ -983,7 +1007,11 @@ async def search_similar_cheaper_title_only(
                         continue
 
                     nm_id = _parse_int(product.get("id") or product.get("nmId"))
-                    if nm_id is None or nm_id == exclude_wb_item_id or nm_id in seen_ids:
+                    if (
+                        nm_id is None
+                        or nm_id == exclude_wb_item_id
+                        or nm_id in seen_ids
+                    ):
                         continue
 
                     if not _is_in_stock_product(product):
@@ -993,13 +1021,18 @@ async def search_similar_cheaper_title_only(
                     if price is None or price >= max_price:
                         continue
 
-                    title = str(product.get("name") or product.get("imt_name") or f"WB #{nm_id}")
+                    title = str(
+                        product.get("name") or product.get("imt_name") or f"WB #{nm_id}"
+                    )
 
                     if base_subject_id is not None:
                         candidate_subject_id = _parse_int(
                             product.get("subjectId") or product.get("subjectID")
                         )
-                        if candidate_subject_id is not None and candidate_subject_id != base_subject_id:
+                        if (
+                            candidate_subject_id is not None
+                            and candidate_subject_id != base_subject_id
+                        ):
                             continue
 
                     item = WbSimilarProduct(
@@ -1007,7 +1040,10 @@ async def search_similar_cheaper_title_only(
                         title=title,
                         price=price,
                         url=f"https://www.wildberries.ru/catalog/{nm_id}/detail.aspx",
-                        brand=str(product.get("brand") or product.get("brandName") or "").strip() or None,
+                        brand=str(
+                            product.get("brand") or product.get("brandName") or ""
+                        ).strip()
+                        or None,
                     )
 
                     seller = _seller_key(product)
@@ -1584,7 +1620,7 @@ def _parse_product_dict(p: dict, wb_item_id: int) -> "WbProductSnapshot":
                 total_qty += max(0, qty)
 
     color_names: list[str] = []
-    for c in (p.get("colors") or []):
+    for c in p.get("colors") or []:
         if isinstance(c, dict) and isinstance(c.get("name"), str) and c["name"].strip():
             color_names.append(c["name"].strip())
 
@@ -1606,6 +1642,7 @@ def _parse_product_dict(p: dict, wb_item_id: int) -> "WbProductSnapshot":
 
 
 _BATCH_SIZE = 20  # WB API stable limit per batch request
+_BATCH_CONCURRENCY = 4
 
 
 async def fetch_products_batch(
@@ -1689,8 +1726,18 @@ async def fetch_products_batch(
         logger.info("BATCH_FETCH: requested=%d got=%d", len(batch), got)
 
     async def _do_batches(s: ClientSession) -> None:
-        for i in range(0, len(unique_ids), _BATCH_SIZE):
-            await _run_batch(s, unique_ids[i: i + _BATCH_SIZE])
+        semaphore = asyncio.Semaphore(_BATCH_CONCURRENCY)
+
+        async def _guarded_run(batch: list[int]) -> None:
+            async with semaphore:
+                await _run_batch(s, batch)
+
+        await asyncio.gather(
+            *(
+                _guarded_run(unique_ids[i : i + _BATCH_SIZE])
+                for i in range(0, len(unique_ids), _BATCH_SIZE)
+            )
+        )
 
     if session is None:
         async with ClientSession(headers=WB_HTTP_HEADERS) as new_session:

@@ -10,6 +10,7 @@ from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 
 from bot.db.redis import MonitorUserRD
+from bot.enums import UserPlan
 from bot.keyboards.inline import dashboard_kb, dashboard_text
 from bot import text as tx
 from bot.services.repository import (
@@ -123,7 +124,7 @@ async def start_cmd(
                     if user.pro_expires_at and user.pro_expires_at > now
                     else now
                 )
-                user.plan = "pro"
+                user.plan = UserPlan.PRO.value
                 user.pro_expires_at = base_expiry + timedelta(days=promo.value)
                 await set_user_tracks_interval(session, user.id, cfg.pro_interval_min)
                 await create_promo_activation(
@@ -165,7 +166,8 @@ async def start_cmd(
         ),
         reply_markup=dashboard_kb(
             admin,
-            show_compare=admin or user.plan in {"pro", "pro_plus"},
+            show_compare=admin
+            or user.plan in {UserPlan.PRO.value, UserPlan.PRO_PLUS.value},
         ),
     )
 

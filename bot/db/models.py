@@ -8,6 +8,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
@@ -17,18 +18,20 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from bot.enums import UserPlan
 from bot.db.base import Base
 
 
 class MonitorUserModel(Base):
     __tablename__ = "monitor_users"
+    __table_args__ = (Index("ix_monitor_users_plan_expires", "plan", "pro_expires_at"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     tg_user_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
     username: Mapped[str | None] = mapped_column(String(255), nullable=True)
     first_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     last_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    plan: Mapped[str] = mapped_column(String(16), default="free")
+    plan: Mapped[str] = mapped_column(String(16), default=UserPlan.FREE.value)
     pro_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     referral_code: Mapped[str | None] = mapped_column(
         String(32), unique=True, index=True, nullable=True
@@ -68,6 +71,14 @@ class RuntimeConfigModel(Base):
 
 class TrackModel(Base):
     __tablename__ = "monitor_tracks"
+    __table_args__ = (
+        Index(
+            "ix_monitor_tracks_active_due",
+            "is_active",
+            "is_deleted",
+            "next_check_at",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(
@@ -95,11 +106,14 @@ class TrackModel(Base):
     last_sizes: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
 
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    next_check_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_notified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     # Адаптивный мониторинг: сколько раз менялась цена за всё время
     price_change_count: Mapped[int] = mapped_column(Integer, default=0)
     # Когда последний раз менялась цена (для расчёта «стабильного» товара)
-    last_price_changed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_price_changed_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
         default=lambda: datetime.now(UTC).replace(tzinfo=None),
@@ -113,6 +127,9 @@ class TrackModel(Base):
 
 class SnapshotModel(Base):
     __tablename__ = "monitor_snapshots"
+    __table_args__ = (
+        Index("ix_monitor_snapshots_track_fetched", "track_id", "fetched_at"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     track_id: Mapped[int] = mapped_column(
@@ -138,6 +155,7 @@ class AlertLogModel(Base):
     __tablename__ = "monitor_alerts_log"
     __table_args__ = (
         UniqueConstraint("event_hash", name="uq_monitor_alert_event_hash"),
+        Index("ix_monitor_alerts_track_sent", "track_id", "sent_at"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -162,6 +180,13 @@ class FeatureUsageModel(Base):
             "period",
             "window_key",
             name="uq_monitor_feature_usage_window",
+        ),
+        Index(
+            "ix_monitor_feature_usage_lookup",
+            "tg_user_id",
+            "feature",
+            "period",
+            "window_key",
         ),
     )
 
@@ -270,21 +295,21 @@ class SupportTicketModel(Base):
     )
     tg_user_id: Mapped[int] = mapped_column(BigInteger, index=True)
     username: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    
+
     # Статус: open, in_progress, closed
     status: Mapped[str] = mapped_column(String(16), default="open", index=True)
-    
+
     # Текст сообщения пользователя
     message: Mapped[str] = mapped_column(Text)
-    
+
     # Ответ поддержки
     response: Mapped[str | None] = mapped_column(Text, nullable=True)
     responded_by_tg_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     responded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    
+
     # Было ли уведомление админу о новом тикете
     admin_notified: Mapped[bool] = mapped_column(Boolean, default=False)
-    
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
         default=lambda: datetime.now(UTC).replace(tzinfo=None),

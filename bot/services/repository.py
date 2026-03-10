@@ -7,11 +7,13 @@ from zoneinfo import ZoneInfo
 from secrets import token_urlsafe
 from typing import TYPE_CHECKING
 
-from sqlalchemy import exists, func, or_, select, update
+from sqlalchemy import exists, func, literal, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from bot.enums import CompareMode
+from bot.enums import UserPlan
 from bot.db.models import (
     AlertLogModel,
     CompareRunModel,
@@ -34,6 +36,25 @@ from bot.services.config import (
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
+
+
+_PAID_PLAN_VALUES = (UserPlan.PRO.value, UserPlan.PRO_PLUS.value)
+_DEFAULT_DUE_BATCH_SIZE = 200
+
+
+def calc_next_check_at(
+    *,
+    track_id: int,
+    base_time: datetime,
+    interval_min: int,
+) -> datetime:
+    jitter_sec = track_id % 30
+    return base_time + timedelta(minutes=max(1, interval_min), seconds=jitter_sec)
+
+
+def _next_check_update_expr(now: datetime, interval_min: int):
+    interval_sql = text(f"INTERVAL '{int(max(1, interval_min))} minutes'")
+    return literal(now) + interval_sql
 
 
 @dataclass(slots=True)
@@ -425,22 +446,29 @@ async def apply_runtime_intervals(
     free_interval_min: int,
     pro_interval_min: int,
 ) -> None:
+    now = datetime.now(UTC).replace(tzinfo=None)
     pro_user_ids = select(MonitorUserModel.id).where(
-        MonitorUserModel.plan.in_(("pro", "pro_plus"))
+        MonitorUserModel.plan.in_(_PAID_PLAN_VALUES)
     )
     free_user_ids = select(MonitorUserModel.id).where(
-        ~MonitorUserModel.plan.in_(("pro", "pro_plus"))
+        ~MonitorUserModel.plan.in_(_PAID_PLAN_VALUES)
     )
 
     await session.execute(
         update(TrackModel)
         .where(TrackModel.user_id.in_(pro_user_ids), TrackModel.is_deleted.is_(False))
-        .values(check_interval_min=pro_interval_min)
+        .values(
+            check_interval_min=pro_interval_min,
+            next_check_at=_next_check_update_expr(now, pro_interval_min),
+        )
     )
     await session.execute(
         update(TrackModel)
         .where(TrackModel.user_id.in_(free_user_ids), TrackModel.is_deleted.is_(False))
-        .values(check_interval_min=free_interval_min)
+        .values(
+            check_interval_min=free_interval_min,
+            next_check_at=_next_check_update_expr(now, free_interval_min),
+        )
     )
 
 
@@ -451,7 +479,7 @@ async def expire_pro_users(
     free_interval_min: int = FREE_INTERVAL,
 ) -> int:
     stmt_ids = select(MonitorUserModel.id, MonitorUserModel.tg_user_id).where(
-        MonitorUserModel.plan.in_(("pro", "pro_plus")),
+        MonitorUserModel.plan.in_(_PAID_PLAN_VALUES),
         MonitorUserModel.pro_expires_at.is_not(None),
         MonitorUserModel.pro_expires_at < now,
     )
@@ -466,13 +494,16 @@ async def expire_pro_users(
     await session.execute(
         update(MonitorUserModel)
         .where(MonitorUserModel.id.in_(user_ids))
-        .values(plan="free", pro_expires_at=None),
+        .values(plan=UserPlan.FREE.value, pro_expires_at=None),
     )
 
     await session.execute(
         update(TrackModel)
         .where(TrackModel.user_id.in_(user_ids))
-        .values(check_interval_min=free_interval_min),
+        .values(
+            check_interval_min=free_interval_min,
+            next_check_at=_next_check_update_expr(now, free_interval_min),
+        ),
     )
 
     # Инвалидация Redis-кэша для всех сменивших план
@@ -486,10 +517,14 @@ async def expire_pro_users(
 async def set_user_tracks_interval(
     session: AsyncSession, user_id: int, interval_min: int
 ) -> int:
+    now = datetime.now(UTC).replace(tzinfo=None)
     result = await session.execute(
         update(TrackModel)
         .where(TrackModel.user_id == user_id)
-        .values(check_interval_min=interval_min)
+        .values(
+            check_interval_min=interval_min,
+            next_check_at=_next_check_update_expr(now, interval_min),
+        )
     )
     return int(result.rowcount or 0)
 
@@ -508,6 +543,7 @@ async def create_track(
     reviews: int | None,
     check_interval_min: int,
 ) -> TrackModel:
+    created_at = datetime.now(UTC).replace(tzinfo=None)
     track = TrackModel(
         user_id=user_id,
         wb_item_id=wb_item_id,
@@ -521,10 +557,15 @@ async def create_track(
         last_in_stock=in_stock,
         last_qty=qty,
         last_sizes=sizes,
-        last_checked_at=datetime.now(UTC).replace(tzinfo=None),
+        last_checked_at=created_at,
     )
     session.add(track)
     await session.flush()
+    track.next_check_at = calc_next_check_at(
+        track_id=track.id,
+        base_time=created_at,
+        interval_min=check_interval_min,
+    )
 
     session.add(
         SnapshotModel(
@@ -557,6 +598,26 @@ async def toggle_track_active(
     )
 
 
+async def toggle_track_active_for_user(
+    session: AsyncSession,
+    *,
+    track_id: int,
+    user_id: int,
+    is_active: bool,
+) -> bool:
+    changed_track_id = await session.scalar(
+        update(TrackModel)
+        .where(
+            TrackModel.id == track_id,
+            TrackModel.user_id == user_id,
+            TrackModel.is_deleted.is_(False),
+        )
+        .values(is_active=is_active)
+        .returning(TrackModel.id)
+    )
+    return changed_track_id is not None
+
+
 async def delete_track(session: AsyncSession, track_id: int) -> None:
     await session.execute(
         update(TrackModel)
@@ -565,31 +626,77 @@ async def delete_track(session: AsyncSession, track_id: int) -> None:
     )
 
 
-async def get_user_track_by_id(
-    session: AsyncSession, track_id: int
-) -> TrackModel | None:
-    return await session.scalar(
-        select(TrackModel).where(
-            TrackModel.id == track_id, TrackModel.is_deleted.is_(False)
+async def delete_track_for_user(
+    session: AsyncSession,
+    *,
+    track_id: int,
+    user_id: int,
+) -> bool:
+    changed_track_id = await session.scalar(
+        update(TrackModel)
+        .where(
+            TrackModel.id == track_id,
+            TrackModel.user_id == user_id,
+            TrackModel.is_deleted.is_(False),
         )
+        .values(is_deleted=True, is_active=False)
+        .returning(TrackModel.id)
     )
+    return changed_track_id is not None
 
 
-async def due_tracks_python_safe(
-    session: AsyncSession, now: datetime
+async def get_user_track_by_id(
+    session: AsyncSession, track_id: int, *, user_id: int | None = None
+) -> TrackModel | None:
+    filters = [TrackModel.id == track_id, TrackModel.is_deleted.is_(False)]
+    if user_id is not None:
+        filters.append(TrackModel.user_id == user_id)
+    return await session.scalar(select(TrackModel).where(*filters))
+
+
+async def get_due_tracks_batch(
+    session: AsyncSession,
+    now: datetime,
+    *,
+    limit: int = _DEFAULT_DUE_BATCH_SIZE,
+    stock_only: bool = False,
 ) -> list[TrackModel]:
-    rows = await session.scalars(
+    query = (
         select(TrackModel)
         .options(selectinload(TrackModel.user))
-        .where(TrackModel.is_active.is_(True), TrackModel.is_deleted.is_(False))
+        .where(
+            TrackModel.is_active.is_(True),
+            TrackModel.is_deleted.is_(False),
+            or_(TrackModel.next_check_at.is_(None), TrackModel.next_check_at <= now),
+        )
+        .order_by(TrackModel.next_check_at.asc().nullsfirst(), TrackModel.id.asc())
+        .limit(max(1, limit))
     )
-    out: list[TrackModel] = []
-    for t in list(rows):
-        if t.last_checked_at is None or t.last_checked_at <= now - timedelta(
-            minutes=t.check_interval_min
-        ):
-            out.append(t)
-    return out
+    if stock_only:
+        query = query.where(
+            TrackModel.watch_stock.is_(True),
+            TrackModel.last_in_stock.is_(False),
+        )
+    rows = await session.scalars(query)
+    return list(rows)
+
+
+async def get_next_due_at(
+    session: AsyncSession,
+    *,
+    stock_only: bool = False,
+) -> datetime | None:
+    query = select(func.min(TrackModel.next_check_at)).where(
+        TrackModel.is_active.is_(True),
+        TrackModel.is_deleted.is_(False),
+        TrackModel.next_check_at.is_not(None),
+    )
+    if stock_only:
+        query = query.where(
+            TrackModel.watch_stock.is_(True),
+            TrackModel.last_in_stock.is_(False),
+        )
+    return await session.scalar(query)
 
 
 async def is_duplicate_event(
@@ -617,6 +724,37 @@ async def log_event(
     )
     inserted_id = await session.scalar(stmt)
     return inserted_id is not None
+
+
+async def delete_alert_events_by_hashes(
+    session: AsyncSession,
+    *,
+    event_hashes: list[str],
+) -> int:
+    if not event_hashes:
+        return 0
+    result = await session.execute(
+        AlertLogModel.__table__.delete().where(
+            AlertLogModel.event_hash.in_(event_hashes)
+        )
+    )
+    return int(result.rowcount or 0)
+
+
+async def mark_tracks_last_notified(
+    session: AsyncSession,
+    *,
+    track_ids: list[int],
+    notified_at: datetime,
+) -> int:
+    if not track_ids:
+        return 0
+    result = await session.execute(
+        update(TrackModel)
+        .where(TrackModel.id.in_(track_ids))
+        .values(last_notified_at=notified_at)
+    )
+    return int(result.rowcount or 0)
 
 
 async def get_price_history_stats(
@@ -661,15 +799,16 @@ async def create_compare_run(
     session: AsyncSession,
     *,
     user_id: int,
-    mode: str,
+    mode: CompareMode | str,
     input_item_ids: list[int],
     winner_item_id: int | None,
     result_json: dict,
 ) -> None:
+    mode_value = mode.value if isinstance(mode, CompareMode) else str(mode)
     session.add(
         CompareRunModel(
             user_id=user_id,
-            mode=mode,
+            mode=mode_value,
             input_item_ids=input_item_ids,
             winner_item_id=winner_item_id,
             result_json=result_json,
@@ -706,7 +845,7 @@ async def get_admin_stats(session: AsyncSession, *, days: int) -> AdminStats:
     pro_users = int(
         await session.scalar(
             select(func.count(MonitorUserModel.id)).where(
-                MonitorUserModel.plan.in_(("pro", "pro_plus")),
+                MonitorUserModel.plan.in_(_PAID_PLAN_VALUES),
                 or_(
                     MonitorUserModel.pro_expires_at.is_(None),
                     MonitorUserModel.pro_expires_at >= now,
@@ -819,6 +958,50 @@ async def create_support_ticket(
         status="open",
     )
     session.add(ticket)
+    await session.commit()
+    await session.refresh(ticket)
+    return ticket
+
+
+async def create_support_ticket_with_photos(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    tg_user_id: int,
+    username: str | None,
+    message: str,
+    photos: list[dict[str, object]] | None = None,
+) -> SupportTicketModel:
+    ticket = SupportTicketModel(
+        user_id=user_id,
+        tg_user_id=tg_user_id,
+        username=username,
+        message=message,
+        status="open",
+    )
+    session.add(ticket)
+    await session.flush()
+
+    for photo_data in photos or []:
+        session.add(
+            SupportTicketPhotoModel(
+                ticket_id=ticket.id,
+                file_id=str(photo_data["file_id"]),
+                file_unique_id=str(photo_data["file_unique_id"]),
+                width=int(photo_data["width"])
+                if photo_data.get("width") is not None
+                else None,
+                height=int(photo_data["height"])
+                if photo_data.get("height") is not None
+                else None,
+                file_size=(
+                    int(photo_data["file_size"])
+                    if photo_data.get("file_size") is not None
+                    else None
+                ),
+            )
+        )
+
     await session.commit()
     await session.refresh(ticket)
     return ticket
