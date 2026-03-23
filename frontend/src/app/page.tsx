@@ -66,7 +66,17 @@ export default function DashboardPage() {
     <div className="page-wrapper">
       {/* Header */}
       <div className="header">
-        <div className="header-greeting">Привет, {userName}! 👋</div>
+        <div className="header-top">
+          <div className="header-greeting">Привет, {userName}! 👋</div>
+          <button
+            className="btn-refresh"
+            onClick={() => { setLoading(true); load(); }}
+            title="Обновить"
+            aria-label="Обновить данные"
+          >
+            ↻
+          </button>
+        </div>
         <div className="header-plan">
           Тариф: <span className={`plan-chip${isPro ? "" : " free"}`}>{planLabel}</span>
         </div>

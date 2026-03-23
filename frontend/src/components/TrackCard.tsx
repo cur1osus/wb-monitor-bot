@@ -2,8 +2,8 @@
 
 import { useState, useCallback, useRef } from "react";
 import {
-  LineChart,
-  Line,
+  AreaChart,
+  Area,
   ResponsiveContainer,
   Tooltip,
   YAxis,
@@ -226,6 +226,11 @@ export default function TrackCard({ track, isPro, onRefresh }: TrackCardProps) {
               <div className="meta-item">
                 <span className="meta-label">Рейтинг</span>
                 <span className="meta-value">{formatRating(track.rating)}</span>
+                <span className="meta-stars">
+                  {Array.from({ length: 5 }, (_, i) => (
+                    <span key={i} className={i < Math.round(track.rating!) ? "star filled" : "star"}>★</span>
+                  ))}
+                </span>
               </div>
             )}
             {track.reviews !== null && (
@@ -240,18 +245,25 @@ export default function TrackCard({ track, isPro, onRefresh }: TrackCardProps) {
           {hasChart && (
             <div className="chart-area">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={chartData} margin={{ top: 4, right: 4, left: 0, bottom: 4 }}>
+                <AreaChart data={chartData} margin={{ top: 4, right: 4, left: 0, bottom: 4 }}>
+                  <defs>
+                    <linearGradient id={`chartGrad-${track.id}`} x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="var(--md-primary)" stopOpacity={0.25} />
+                      <stop offset="95%" stopColor="var(--md-primary)" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
                   <YAxis domain={["auto", "auto"]} hide />
                   <Tooltip content={<ChartTooltip />} />
-                  <Line
+                  <Area
                     type="monotone"
                     dataKey="price"
                     stroke="var(--btn)"
                     strokeWidth={2}
                     dot={false}
                     activeDot={{ r: 4, fill: "var(--btn)" }}
+                    fill={`url(#chartGrad-${track.id})`}
                   />
-                </LineChart>
+                </AreaChart>
               </ResponsiveContainer>
             </div>
           )}
@@ -530,24 +542,36 @@ export default function TrackCard({ track, isPro, onRefresh }: TrackCardProps) {
                 </div>
               )}
               <div className="similar-list">
-                {similarData.items.map((item, i) => (
-                  <a
-                    key={item.wb_item_id}
-                    href={item.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="similar-item"
-                  >
-                    <div className="similar-num">{i + 1}</div>
-                    <div className="similar-info">
-                      <div className="similar-title">
-                        {item.brand ? <strong>{item.brand} </strong> : null}{item.title}
+                {similarData.items.map((item, i) => {
+                  const itemPrice = parseFloat(item.price);
+                  const basePrice = similarData.base_price ? parseFloat(similarData.base_price) : null;
+                  const savings = similarMode === "cheap" && basePrice && basePrice > itemPrice
+                    ? Math.round(basePrice - itemPrice)
+                    : null;
+                  return (
+                    <a
+                      key={item.wb_item_id}
+                      href={item.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="similar-item"
+                    >
+                      <div className="similar-num">{i + 1}</div>
+                      <div className="similar-info">
+                        <div className="similar-title">
+                          {item.brand ? <strong>{item.brand} </strong> : null}{item.title}
+                        </div>
+                        <div className="similar-price-row">
+                          <span className="similar-price">{formatPrice(itemPrice)}</span>
+                          {savings !== null && savings > 0 && (
+                            <span className="similar-savings">−{savings.toLocaleString("ru-RU")} ₽</span>
+                          )}
+                        </div>
                       </div>
-                      <div className="similar-price">{formatPrice(parseFloat(item.price))}</div>
-                    </div>
-                    <div className="similar-arrow">›</div>
-                  </a>
-                ))}
+                      <div className="similar-arrow">›</div>
+                    </a>
+                  );
+                })}
               </div>
             </>
           )}

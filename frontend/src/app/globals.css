@@ -154,6 +154,32 @@ a { color: var(--link); text-decoration: none; }
   gap: 4px;
 }
 
+.header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.btn-refresh {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--md-outline);
+  background: var(--md-surface);
+  color: var(--md-primary);
+  font-size: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s, transform 0.2s;
+  line-height: 1;
+}
+
+.btn-refresh:active { transform: rotate(180deg); background: rgba(var(--md-primary-rgb), 0.08); }
+
 .header-greeting {
   font-size: 26px;
   font-weight: 800;
@@ -402,15 +428,24 @@ a { color: var(--link); text-decoration: none; }
 
 .meta-delta {
   font-size: 11px;
-  font-weight: 600;
-  margin-top: 1px;
-  display: flex;
+  font-weight: 700;
+  margin-top: 3px;
+  display: inline-flex;
   align-items: center;
   gap: 2px;
+  padding: 2px 7px;
+  border-radius: var(--radius-pill);
 }
 
-.delta-up   { color: var(--error); }
-.delta-down { color: var(--success); }
+.delta-up   {
+  color: var(--error);
+  background: var(--error-bg);
+}
+
+.delta-down {
+  color: var(--success);
+  background: var(--success-bg);
+}
 
 /* ===== CHART ===== */
 .chart-area {
@@ -777,21 +812,26 @@ a { color: var(--link); text-decoration: none; }
 
 .btn-feature {
   flex: 1;
-  padding: 9px 12px;
+  padding: 10px 12px;
   font-size: 12px;
-  background: rgba(var(--md-primary-rgb), 0.06);
+  background: rgba(var(--md-primary-rgb), 0.08);
   color: var(--md-primary);
-  border: 1.5px dashed rgba(var(--md-primary-rgb), 0.28);
-  border-radius: var(--radius-pill);
+  border: 1px solid rgba(var(--md-primary-rgb), 0.18);
+  border-radius: var(--radius-md);
   font-weight: 600;
   cursor: pointer;
   text-align: center;
-  transition: background 0.15s, opacity 0.15s, transform 0.1s;
+  transition: background 0.15s, opacity 0.15s, transform 0.1s, box-shadow 0.15s;
   font-family: 'Google Sans', sans-serif;
-  line-height: 1;
+  line-height: 1.3;
   white-space: nowrap;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
 }
 
+.btn-feature:hover { background: rgba(var(--md-primary-rgb), 0.12); box-shadow: 0 2px 8px rgba(var(--md-primary-rgb), 0.15); }
 .btn-feature:active { opacity: 0.7; transform: scale(0.97); }
 .btn-feature:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
 
@@ -911,6 +951,41 @@ a { color: var(--link); text-decoration: none; }
 .insight-chip.negative {
   background: var(--error-bg);
   color: var(--error);
+}
+
+/* ===== STAR RATING ===== */
+.meta-stars {
+  display: flex;
+  gap: 1px;
+  margin-top: 1px;
+}
+
+.star {
+  font-size: 11px;
+  color: rgba(107, 114, 128, 0.35);
+  line-height: 1;
+}
+
+.star.filled {
+  color: #f59e0b;
+}
+
+/* ===== SIMILAR PRICE ROW ===== */
+.similar-price-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 3px;
+}
+
+.similar-savings {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: var(--radius-pill);
+  background: var(--success-bg);
+  color: var(--success);
+  letter-spacing: -0.2px;
 }
 
 /* ===== SIMILAR ===== */
