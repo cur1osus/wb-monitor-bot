@@ -2,37 +2,67 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="var(--tg-theme-bg-color, #ffffff)">
+    <meta name="color-scheme" content="light dark">
     <title>WB Monitor</title>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <!-- Telegram Web App SDK - must be loaded first -->
+    <script src="https://telegram.org/js/telegram-web-app.js?61"></script>
     <style>
+        :root {
+            /* Telegram theme variables */
+            --bg-color: var(--tg-theme-bg-color, #ffffff);
+            --text-color: var(--tg-theme-text-color, #000000);
+            --hint-color: var(--tg-theme-hint-color, #999999);
+            --link-color: var(--tg-theme-link-color, #3390ec);
+            --button-color: var(--tg-theme-button-color, #3390ec);
+            --button-text-color: var(--tg-theme-button-text-color, #ffffff);
+            --secondary-bg-color: var(--tg-theme-secondary-bg-color, #f0f0f0);
+            --section-bg-color: var(--tg-theme-section-bg-color, #f5f5f5);
+            
+            /* Safe area insets */
+            --safe-area-inset-top: env(safe-area-inset-top, 0px);
+            --safe-area-inset-bottom: env(safe-area-inset-bottom, 0px);
+        }
+        
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }
+        
+        html {
+            height: 100%;
         }
         
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-            background-color: var(--tg-theme-bg-color, #ffffff);
-            color: var(--tg-theme-text-color, #000000);
-            min-height: 100vh;
-            padding: 16px;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            min-height: 100%;
+            min-height: var(--tg-viewport-height, 100vh);
+            padding: calc(16px + var(--safe-area-inset-top)) 16px calc(16px + var(--safe-area-inset-bottom));
+            line-height: 1.5;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
         }
         
+        /* Loading state */
         .loading {
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
             min-height: 100vh;
+            min-height: var(--tg-viewport-height, 100vh);
         }
         
         .spinner {
             width: 48px;
             height: 48px;
-            border: 4px solid var(--tg-theme-hint-color, #e0e0e0);
-            border-top-color: var(--tg-theme-button-color, #3390ec);
+            border: 4px solid var(--secondary-bg-color);
+            border-top-color: var(--button-color);
             border-radius: 50%;
             animation: spin 1s linear infinite;
         }
@@ -41,9 +71,10 @@
             to { transform: rotate(360deg); }
         }
         
+        /* Error state */
         .error {
             text-align: center;
-            padding: 32px;
+            padding: 32px 16px;
         }
         
         .error-icon {
@@ -51,6 +82,7 @@
             margin-bottom: 16px;
         }
         
+        /* Stats grid */
         .stats {
             display: grid;
             grid-template-columns: repeat(2, 1fr);
@@ -59,7 +91,7 @@
         }
         
         .stat-card {
-            background: var(--tg-theme-secondary-bg-color, #f0f0f0);
+            background: var(--secondary-bg-color);
             border-radius: 12px;
             padding: 16px;
             display: flex;
@@ -88,8 +120,9 @@
             opacity: 0.6;
         }
         
+        /* Track cards */
         .track-card {
-            background: var(--tg-theme-secondary-bg-color, #f0f0f0);
+            background: var(--secondary-bg-color);
             border-radius: 12px;
             padding: 16px;
             margin-bottom: 12px;
@@ -100,19 +133,21 @@
             justify-content: space-between;
             align-items: flex-start;
             margin-bottom: 12px;
+            gap: 8px;
         }
         
         .track-title {
             font-weight: 600;
             font-size: 16px;
             flex: 1;
+            word-break: break-word;
         }
         
         .track-status {
             font-size: 12px;
             padding: 4px 8px;
             border-radius: 6px;
-            margin-left: 8px;
+            white-space: nowrap;
         }
         
         .track-status.in-stock {
@@ -153,37 +188,42 @@
         
         .btn {
             flex: 1;
-            padding: 10px 16px;
+            padding: 12px 16px;
             border: none;
             border-radius: 8px;
             font-size: 14px;
             font-weight: 600;
             cursor: pointer;
-            transition: opacity 0.2s;
+            transition: opacity 0.2s, transform 0.1s;
+            text-decoration: none;
+            text-align: center;
+            display: inline-block;
         }
         
         .btn:active {
             opacity: 0.8;
+            transform: scale(0.98);
         }
         
         .btn-primary {
-            background: var(--tg-theme-button-color, #3390ec);
-            color: var(--tg-theme-button-text-color, #ffffff);
+            background: var(--button-color);
+            color: var(--button-text-color);
         }
         
         .btn-secondary {
-            background: var(--tg-theme-hint-color, #c0c0c0);
+            background: var(--hint-color);
             color: #ffffff;
         }
         
         .chart-container {
             margin-top: 12px;
             height: 150px;
-            background: var(--tg-theme-bg-color, #ffffff);
+            background: var(--bg-color);
             border-radius: 8px;
             padding: 8px;
         }
         
+        /* Empty state */
         .empty-state {
             text-align: center;
             padding: 48px 16px;
@@ -194,6 +234,7 @@
             margin-bottom: 16px;
         }
         
+        /* Header */
         .header {
             margin-bottom: 20px;
         }
@@ -208,6 +249,16 @@
             font-size: 14px;
             opacity: 0.6;
         }
+        
+        /* Links */
+        a {
+            color: var(--link-color);
+            text-decoration: none;
+        }
+        
+        a:hover {
+            text-decoration: underline;
+        }
     </style>
 </head>
 <body>
@@ -218,26 +269,44 @@
     </div>
 
     <script>
+        // Initialize Telegram Web App
         const tg = window.Telegram.WebApp;
+        
+        // Inform Telegram that Mini App is ready (hides loading placeholder)
         tg.ready();
+        
+        // Expand to maximum available height
         tg.expand();
-
+        
+        // Enable closing confirmation if there are unsaved changes
+        tg.enableClosingConfirmation();
+        
+        // Get initialization data (contains user info and auth data)
+        const initData = tg.initData || '';
+        const initDataUnsafe = tg.initDataUnsafe || {};
+        
+        // API configuration
         const API_URL = ''; // Same origin
         
-        function getInitData() {
-            return tg.initData || '';
-        }
-        
+        /**
+         * Format price with ruble symbol
+         */
         function formatPrice(price) {
             if (price === null || price === undefined) return '—';
             return price.toLocaleString('ru-RU') + ' ₽';
         }
         
+        /**
+         * Format rating with one decimal
+         */
         function formatRating(rating) {
             if (rating === null || rating === undefined) return '—';
             return rating.toFixed(1);
         }
         
+        /**
+         * Format date as "DD Mon"
+         */
         function formatDate(dateString) {
             return new Date(dateString).toLocaleDateString('ru-RU', {
                 day: 'numeric',
@@ -245,16 +314,22 @@
             });
         }
         
+        /**
+         * Fetch dashboard data from API
+         */
         async function fetchDashboard() {
             try {
                 const response = await fetch(API_URL + '/api/tracks', {
+                    method: 'GET',
                     headers: {
-                        'X-Telegram-Init-Data': getInitData()
+                        'X-Telegram-Init-Data': initData,
+                        'Content-Type': 'application/json'
                     }
                 });
                 
                 if (!response.ok) {
-                    throw new Error('Failed to fetch data');
+                    const error = await response.json().catch(() => ({ detail: 'Failed to fetch data' }));
+                    throw new Error(error.detail || `HTTP ${response.status}`);
                 }
                 
                 return await response.json();
@@ -264,19 +339,26 @@
             }
         }
         
+        /**
+         * Toggle track active status
+         */
         async function toggleTrack(trackId) {
             try {
                 const response = await fetch(API_URL + '/api/action', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'X-Telegram-Init-Data': getInitData()
+                        'X-Telegram-Init-Data': initData
                     },
                     body: JSON.stringify({
                         event: 'toggle',
                         track_id: trackId
                     })
                 });
+                
+                if (!response.ok) {
+                    throw new Error('Failed to toggle track');
+                }
                 
                 return await response.json();
             } catch (error) {
@@ -285,9 +367,12 @@
             }
         }
         
+        /**
+         * Draw price chart using Canvas API
+         */
         function drawChart(container, data) {
             if (!data || data.length === 0) {
-                container.innerHTML = '<div style="text-align:center;opacity:0.5;padding:50px;">Нет данных</div>';
+                container.innerHTML = '<div style="text-align:center;opacity:0.5;padding:50px;font-size:12px;">Нет данных для отображения</div>';
                 return;
             }
             
@@ -298,62 +383,125 @@
             
             const ctx = canvas.getContext('2d');
             const rect = container.getBoundingClientRect();
-            canvas.width = rect.width * window.devicePixelRatio;
-            canvas.height = rect.height * window.devicePixelRatio;
-            ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+            const dpr = window.devicePixelRatio || 1;
             
-            const padding = { top: 20, right: 20, bottom: 30, left: 50 };
+            // Set canvas size with device pixel ratio for sharp rendering
+            canvas.width = rect.width * dpr;
+            canvas.height = rect.height * dpr;
+            ctx.scale(dpr, dpr);
+            
+            const padding = { top: 20, right: 15, bottom: 25, left: 45 };
             const chartWidth = rect.width - padding.left - padding.right;
             const chartHeight = rect.height - padding.top - padding.bottom;
             
+            // Get price data
             const prices = data.map(d => d.price).filter(p => p !== null);
+            if (prices.length === 0) {
+                container.innerHTML = '<div style="text-align:center;opacity:0.5;padding:50px;font-size:12px;">Нет данных о цене</div>';
+                return;
+            }
+            
             const minPrice = Math.min(...prices) * 0.99;
             const maxPrice = Math.max(...prices) * 1.01;
+            const priceRange = maxPrice - minPrice || 1;
             
-            // Draw axes
-            ctx.strokeStyle = '#e0e0e0';
+            // Draw grid lines
+            ctx.strokeStyle = getComputedStyle(document.body).getPropertyValue('--secondary-bg-color') || '#e0e0e0';
             ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.moveTo(padding.left, padding.top);
-            ctx.lineTo(padding.left, rect.height - padding.bottom);
-            ctx.lineTo(rect.width - padding.right, rect.height - padding.bottom);
-            ctx.stroke();
+            ctx.setLineDash([3, 3]);
             
-            // Draw line
-            ctx.strokeStyle = '#3390ec';
+            // Horizontal grid lines
+            for (let i = 0; i <= 3; i++) {
+                const y = padding.top + (i / 3) * chartHeight;
+                ctx.beginPath();
+                ctx.moveTo(padding.left, y);
+                ctx.lineTo(rect.width - padding.right, y);
+                ctx.stroke();
+            }
+            
+            ctx.setLineDash([]);
+            
+            // Draw price line
+            ctx.strokeStyle = getComputedStyle(document.body).getPropertyValue('--button-color') || '#3390ec';
             ctx.lineWidth = 2;
+            ctx.lineJoin = 'round';
+            ctx.lineCap = 'round';
             ctx.beginPath();
             
-            const points = data.filter(d => d.price !== null).map((d, i, arr) => {
-                const x = padding.left + (i / (arr.length - 1 || 1)) * chartWidth;
-                const y = padding.top + chartHeight - ((d.price - minPrice) / (maxPrice - minPrice || 1)) * chartHeight;
+            const validData = data.filter(d => d.price !== null);
+            const points = validData.map((d, i) => {
+                const x = padding.left + (i / (validData.length - 1 || 1)) * chartWidth;
+                const y = padding.top + chartHeight - ((d.price - minPrice) / priceRange) * chartHeight;
                 return { x, y, price: d.price, date: d.date };
             });
             
             if (points.length > 0) {
                 ctx.moveTo(points[0].x, points[0].y);
-                points.forEach((point, i) => {
-                    if (i > 0) ctx.lineTo(point.x, point.y);
-                });
+                
+                // Draw smooth line
+                for (let i = 1; i < points.length; i++) {
+                    const xc = (points[i].x + points[i - 1].x) / 2;
+                    const yc = (points[i].y + points[i - 1].y) / 2;
+                    ctx.quadraticCurveTo(points[i - 1].x, points[i - 1].y, xc, yc);
+                }
+                ctx.lineTo(points[points.length - 1].x, points[points.length - 1].y);
             }
             ctx.stroke();
             
-            // Draw points
-            points.forEach(point => {
-                ctx.fillStyle = '#3390ec';
-                ctx.beginPath();
-                ctx.arc(point.x, point.y, 4, 0, Math.PI * 2);
-                ctx.fill();
+            // Draw data points
+            points.forEach((point, i) => {
+                // Only draw points for first, last, and every 5th point to avoid clutter
+                if (i === 0 || i === points.length - 1 || i % 5 === 0) {
+                    ctx.fillStyle = getComputedStyle(document.body).getPropertyValue('--button-color') || '#3390ec';
+                    ctx.beginPath();
+                    ctx.arc(point.x, point.y, 4, 0, Math.PI * 2);
+                    ctx.fill();
+                }
             });
             
             // Draw Y-axis labels
-            ctx.fillStyle = '#999';
-            ctx.font = '11px sans-serif';
+            ctx.fillStyle = getComputedStyle(document.body).getPropertyValue('--hint-color') || '#999';
+            ctx.font = '11px -apple-system, BlinkMacSystemFont, sans-serif';
             ctx.textAlign = 'right';
-            ctx.fillText(formatPrice(maxPrice), padding.left - 5, padding.top + 5);
-            ctx.fillText(formatPrice(minPrice), padding.left - 5, rect.height - padding.bottom - 5);
+            ctx.textBaseline = 'top';
+            ctx.fillText(formatPrice(maxPrice), padding.left - 5, padding.top - 2);
+            ctx.textBaseline = 'bottom';
+            ctx.fillText(formatPrice(minPrice), padding.left - 5, rect.height - padding.bottom + 2);
         }
         
+        /**
+         * Handle track toggle button click
+         */
+        function handleToggle(trackId, currentStatus, btnElement) {
+            // Haptic feedback (if supported)
+            if (tg.HapticFeedback) {
+                tg.HapticFeedback.impactOccurred('light');
+            }
+            
+            // Optimistic UI update
+            const wasActive = currentStatus;
+            btnElement.textContent = currentStatus ? 'Пауза...' : 'Включить...';
+            btnElement.disabled = true;
+            
+            toggleTrack(trackId)
+                .then(() => {
+                    // Re-render to show updated status
+                    render();
+                })
+                .catch(err => {
+                    console.error('Toggle failed:', err);
+                    // Revert button state
+                    btnElement.textContent = wasActive ? 'Пауза' : 'Включить';
+                    btnElement.disabled = false;
+                    
+                    // Show error using Telegram's native alert
+                    tg.showAlert('Не удалось изменить статус. Попробуйте еще раз.');
+                });
+        }
+        
+        /**
+         * Main render function
+         */
         function render() {
             const app = document.getElementById('app');
             
@@ -361,14 +509,16 @@
                 .then(data => {
                     const { user, tracks } = data;
                     
+                    // Calculate stats
                     const totalTracks = tracks.length;
                     const activeTracks = tracks.filter(t => t.is_active).length;
                     const inStockTracks = tracks.filter(t => t.in_stock).length;
                     
+                    // Build HTML
                     let html = `
                         <div class="header">
-                            <div class="header-title">👋 Привет, ${user.first_name || user.username || 'Пользователь'}!</div>
-                            <div class="header-subtitle">Тариф: ${user.plan.toUpperCase()}</div>
+                            <div class="header-title">👋 Привет, ${escapeHtml(user.first_name || user.username || 'Пользователь')}!</div>
+                            <div class="header-subtitle">Тариф: ${escapeHtml(user.plan).toUpperCase()}</div>
                         </div>
                         
                         <div class="stats">
@@ -396,6 +546,7 @@
                         </div>
                     `;
                     
+                    // Render tracks
                     if (tracks.length === 0) {
                         html += `
                             <div class="empty-state">
@@ -405,14 +556,14 @@
                             </div>
                         `;
                     } else {
-                        tracks.forEach(track => {
+                        tracks.forEach((track, index) => {
                             const history = track.history || [];
-                            const chartId = `chart-${track.id}`;
+                            const chartId = `chart-${track.id}-${index}`;
                             
                             html += `
                                 <div class="track-card">
                                     <div class="track-header">
-                                        <div class="track-title">${track.title}</div>
+                                        <div class="track-title">${escapeHtml(track.title)}</div>
                                         <span class="track-status ${track.in_stock ? 'in-stock' : 'out-of-stock'}">
                                             ${track.in_stock ? 'В наличии' : 'Нет в наличии'}
                                         </span>
@@ -430,11 +581,13 @@
                                     </div>
                                     
                                     <div class="track-actions">
-                                        <button class="btn ${track.is_active ? 'btn-secondary' : 'btn-primary'}" 
-                                                onclick="handleToggle(${track.id}, ${track.is_active})">
+                                        <button 
+                                            class="btn ${track.is_active ? 'btn-secondary' : 'btn-primary'}"
+                                            onclick="handleToggle(${track.id}, ${track.is_active}, this)"
+                                        >
                                             ${track.is_active ? 'Пауза' : 'Включить'}
                                         </button>
-                                        <a href="${track.url}" target="_blank" class="btn btn-secondary">
+                                        <a href="${escapeHtml(track.url)}" target="_blank" rel="noopener noreferrer" class="btn btn-secondary">
                                             Открыть на WB
                                         </a>
                                     </div>
@@ -443,7 +596,7 @@
                                 </div>
                             `;
                             
-                            // Draw chart after render
+                            // Draw chart after DOM update
                             setTimeout(() => {
                                 const container = document.getElementById(chartId);
                                 if (container) {
@@ -455,33 +608,78 @@
                     
                     app.innerHTML = html;
                     
+                    // Setup MainButton for "Back to Bot" action
+                    if (tg.MainButton) {
+                        tg.MainButton.setText("ЗАКРЫТЬ");
+                        tg.MainButton.onClick(() => {
+                            tg.close();
+                        });
+                        // Show MainButton only if we have data
+                        tg.MainButton.show();
+                    }
+                    
                     // Handle theme changes
                     tg.onEvent('themeChanged', () => {
-                        document.body.style.backgroundColor = 'var(--tg-theme-bg-color, #ffffff)';
-                        document.body.style.color = 'var(--tg-theme-text-color, #000000)';
+                        // Force re-render with new theme colors
+                        setTimeout(() => {
+                            tracks.forEach((track, index) => {
+                                const container = document.getElementById(`chart-${track.id}-${index}`);
+                                if (container && container.querySelector('canvas')) {
+                                    container.innerHTML = '';
+                                    drawChart(container, track.history || []);
+                                }
+                            });
+                        }, 100);
+                    });
+                    
+                    // Handle viewport changes
+                    tg.onEvent('viewportChanged', () => {
+                        // Adjust layout if needed
                     });
                 })
                 .catch(error => {
+                    let errorMessage = 'Ошибка загрузки данных';
+                    if (error.message) {
+                        errorMessage = error.message;
+                    }
+                    
                     app.innerHTML = `
                         <div class="error">
                             <div class="error-icon">❌</div>
-                            <div style="font-weight:600;margin-bottom:8px;">Ошибка загрузки</div>
-                            <div style="opacity:0.6;margin-bottom:16px;">${error.message}</div>
-                            <button class="btn btn-primary" onclick="location.reload()">Повторить</button>
+                            <div style="font-weight:600;margin-bottom:8px;">Ошибка</div>
+                            <div style="opacity:0.6;margin-bottom:16px;max-width:300px;">${escapeHtml(errorMessage)}</div>
+                            <button class="btn btn-primary" onclick="location.reload()" style="min-width:150px;">
+                                Повторить
+                            </button>
                         </div>
                     `;
+                    
+                    // Hide MainButton on error
+                    if (tg.MainButton) {
+                        tg.MainButton.hide();
+                    }
                 });
         }
         
-        function handleToggle(trackId, currentStatus) {
-            tg.HapticFeedback.impactOccurred('light');
-            toggleTrack(trackId).then(() => {
-                render(); // Re-render to show updated status
-            }).catch(err => {
-                console.error('Toggle failed:', err);
-                tg.showAlert('Не удалось изменить статус');
-            });
+        /**
+         * Escape HTML to prevent XSS attacks
+         */
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
         }
+        
+        // Handle visibility changes (when user switches away from Mini App)
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') {
+                // Refresh data when user returns to Mini App
+                if (tg.HapticFeedback) {
+                    tg.HapticFeedback.notificationOccurred('success');
+                }
+            }
+        });
         
         // Start rendering
         render();
