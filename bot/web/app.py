@@ -74,7 +74,7 @@ def _wb_image_url(wb_item_id: int) -> str:
 
 
 def _vol_to_basket(vol: int) -> int:
-    """Map WB vol to basket server number (1-26)."""
+    """Map WB vol to basket server number (1-35+)."""
     if vol <= 143:   return 1
     if vol <= 287:   return 2
     if vol <= 431:   return 3
@@ -100,7 +100,16 @@ def _vol_to_basket(vol: int) -> int:
     if vol <= 4133:  return 23
     if vol <= 4349:  return 24
     if vol <= 4565:  return 25
-    return 26
+    if vol <= 4877:  return 26
+    if vol <= 5190:  return 27
+    if vol <= 5501:  return 28
+    if vol <= 5845:  return 29
+    if vol <= 6113:  return 30
+    if vol <= 6399:  return 31
+    if vol <= 6719:  return 32
+    if vol <= 7099:  return 33
+    if vol <= 7397:  return 34
+    return 35
 
 
 async def _get_tg_user_id(x_telegram_init_data: str | None) -> int:
