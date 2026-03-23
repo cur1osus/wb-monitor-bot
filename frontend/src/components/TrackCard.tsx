@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import {
   LineChart,
   Line,
@@ -8,9 +8,9 @@ import {
   Tooltip,
   YAxis,
 } from "recharts";
-import type { Track } from "@/types";
+import type { Track, ReviewInsights, SimilarResult } from "@/types";
 import { formatPrice, formatRating } from "@/lib/utils";
-import { toggleTrack, deleteTrack, patchTrackSettings } from "@/lib/api";
+import { toggleTrack, deleteTrack, patchTrackSettings, fetchReviews, fetchSimilar } from "@/lib/api";
 
 interface TrackCardProps {
   track: Track;
@@ -45,12 +45,24 @@ function ChartTooltip({
   );
 }
 
-type View = "main" | "settings" | "confirm_delete";
+type View = "main" | "settings" | "confirm_delete" | "reviews" | "similar";
 
 export default function TrackCard({ track, isPro, onRefresh }: TrackCardProps) {
   const [view, setView] = useState<View>("main");
   const [busy, setBusy] = useState(false);
   const [imgError, setImgError] = useState(false);
+
+  // Reviews state
+  const [reviewData, setReviewData] = useState<ReviewInsights | null>(null);
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+
+  // Similar state
+  const [similarData, setSimilarData] = useState<SimilarResult | null>(null);
+  const [similarLoading, setSimilarLoading] = useState(false);
+  const [similarError, setSimilarError] = useState<string | null>(null);
+  const [similarMode, setSimilarMode] = useState<"cheap" | "similar">("cheap");
+  const similarModeRef = useRef<"cheap" | "similar">("cheap");
 
   const haptic = (style: "light" | "medium" = "light") => {
     window.Telegram?.WebApp?.HapticFeedback?.impactOccurred(style);
@@ -109,6 +121,47 @@ export default function TrackCard({ track, isPro, onRefresh }: TrackCardProps) {
     [track.id, track.watch_sizes, onRefresh, busy]
   );
 
+  const handleOpenReviews = useCallback(async () => {
+    haptic();
+    setView("reviews");
+    if (reviewData) return; // already loaded
+    setReviewLoading(true);
+    setReviewError(null);
+    try {
+      const data = await fetchReviews(track.id);
+      setReviewData(data);
+    } catch (e) {
+      setReviewError(e instanceof Error ? e.message : "Ошибка загрузки");
+    } finally {
+      setReviewLoading(false);
+    }
+  }, [track.id, reviewData]);
+
+  const handleOpenSimilar = useCallback(async (mode: "cheap" | "similar") => {
+    haptic();
+    setSimilarMode(mode);
+    similarModeRef.current = mode;
+    setView("similar");
+    setSimilarData(null);
+    setSimilarLoading(true);
+    setSimilarError(null);
+    try {
+      const data = await fetchSimilar(track.id, mode);
+      // Only set if mode hasn't changed while loading
+      if (similarModeRef.current === mode) {
+        setSimilarData(data);
+      }
+    } catch (e) {
+      if (similarModeRef.current === mode) {
+        setSimilarError(e instanceof Error ? e.message : "Ошибка поиска");
+      }
+    } finally {
+      if (similarModeRef.current === mode) {
+        setSimilarLoading(false);
+      }
+    }
+  }, [track.id]);
+
   const chartData = track.history.filter((p) => p.price !== null);
   const hasChart = chartData.length >= 2;
 
@@ -124,11 +177,13 @@ export default function TrackCard({ track, isPro, onRefresh }: TrackCardProps) {
     }
   }
 
+  const goMain = () => { haptic(); setView("main"); };
+
   return (
     <div className={`track-card${track.is_active ? "" : " paused"}`}>
       {/* === MAIN VIEW === */}
       {view === "main" && (
-        <>
+        <div className="view-anim">
           {/* Product image + header */}
           <div className="track-header">
             {!imgError ? (
@@ -201,7 +256,7 @@ export default function TrackCard({ track, isPro, onRefresh }: TrackCardProps) {
             </div>
           )}
 
-          {/* Actions */}
+          {/* Main actions */}
           <div className="track-actions">
             <button
               className={`btn ${track.is_active ? "btn-secondary" : "btn-primary"}`}
@@ -236,20 +291,37 @@ export default function TrackCard({ track, isPro, onRefresh }: TrackCardProps) {
               🗑
             </button>
           </div>
-        </>
+
+          {/* Feature buttons */}
+          <div className="track-features">
+            <button
+              className="btn btn-feature"
+              onClick={handleOpenReviews}
+              disabled={busy}
+            >
+              📝 Анализ отзывов
+            </button>
+            <button
+              className="btn btn-feature"
+              onClick={() => handleOpenSimilar("cheap")}
+              disabled={busy}
+            >
+              💸 Найти дешевле
+            </button>
+          </div>
+        </div>
       )}
 
       {/* === SETTINGS VIEW === */}
       {view === "settings" && (
-        <>
+        <div className="view-anim">
           <div className="settings-header">
             <span className="settings-title">⚙️ Настройки</span>
-            <button className="btn-close" onClick={() => setView("main")}>✕</button>
+            <button className="btn-close" onClick={goMain}>✕</button>
           </div>
           <div className="settings-title-text">{track.title}</div>
 
           <div className="settings-list">
-            {/* watch_stock */}
             <label className="settings-row" onClick={() => handleToggleSetting("watch_stock", track.watch_stock)}>
               <div className="settings-row-info">
                 <span className="settings-row-label">📦 Появление в наличии</span>
@@ -258,7 +330,6 @@ export default function TrackCard({ track, isPro, onRefresh }: TrackCardProps) {
               <div className={`toggle ${track.watch_stock ? "on" : ""}`} />
             </label>
 
-            {/* watch_price_fluctuation */}
             <label className="settings-row" onClick={() => handleToggleSetting("watch_price_fluctuation", track.watch_price_fluctuation)}>
               <div className="settings-row-info">
                 <span className="settings-row-label">💰 Изменение цены</span>
@@ -267,7 +338,6 @@ export default function TrackCard({ track, isPro, onRefresh }: TrackCardProps) {
               <div className={`toggle ${track.watch_price_fluctuation ? "on" : ""}`} />
             </label>
 
-            {/* watch_qty — PRO only */}
             <label className={`settings-row${!isPro ? " locked" : ""}`}
               onClick={() => isPro && handleToggleSetting("watch_qty", track.watch_qty)}>
               <div className="settings-row-info">
@@ -277,7 +347,6 @@ export default function TrackCard({ track, isPro, onRefresh }: TrackCardProps) {
               <div className={`toggle ${track.watch_qty ? "on" : ""}${!isPro ? " disabled" : ""}`} />
             </label>
 
-            {/* watch_sizes */}
             {track.last_sizes.length > 0 && (
               <div className="settings-sizes">
                 <div className="settings-row-label">📏 Отслеживаемые размеры</div>
@@ -303,15 +372,15 @@ export default function TrackCard({ track, isPro, onRefresh }: TrackCardProps) {
             )}
           </div>
 
-          <button className="btn btn-secondary" style={{ width: "100%", marginTop: 4 }} onClick={() => setView("main")}>
+          <button className="btn btn-secondary" style={{ width: "100%", marginTop: 4 }} onClick={goMain}>
             ← Назад
           </button>
-        </>
+        </div>
       )}
 
       {/* === CONFIRM DELETE VIEW === */}
       {view === "confirm_delete" && (
-        <div className="confirm-delete">
+        <div className="confirm-delete view-anim">
           <div className="confirm-icon">🗑️</div>
           <div className="confirm-title">Удалить товар?</div>
           <div className="confirm-subtitle">{track.title}</div>
@@ -325,12 +394,167 @@ export default function TrackCard({ track, isPro, onRefresh }: TrackCardProps) {
             </button>
             <button
               className="btn btn-secondary"
-              onClick={() => setView("main")}
+              onClick={goMain}
               disabled={busy}
             >
               Отмена
             </button>
           </div>
+        </div>
+      )}
+
+      {/* === REVIEWS VIEW === */}
+      {view === "reviews" && (
+        <div className="view-anim">
+          <div className="settings-header">
+            <span className="settings-title">📝 Анализ отзывов</span>
+            <button className="btn-close" onClick={goMain}>✕</button>
+          </div>
+          <div className="settings-title-text">{track.title}</div>
+
+          {reviewLoading && (
+            <div className="feature-loading">
+              <div className="spinner-ring" />
+              <span>Анализируем отзывы…</span>
+              <span className="feature-loading-hint">Это может занять ~15 сек</span>
+            </div>
+          )}
+
+          {reviewError && (
+            <div className="feature-error">⚠️ {reviewError}</div>
+          )}
+
+          {reviewData && !reviewLoading && (
+            <>
+              {(reviewData.positive_total > 0 || reviewData.negative_total > 0) && (
+                <div className="reviews-stats">
+                  <div className="review-stat-chip positive">
+                    <span className="review-stat-icon">👍</span>
+                    <span className="review-stat-num">{reviewData.positive_total.toLocaleString("ru-RU")}</span>
+                    <span className="review-stat-label">положит.</span>
+                  </div>
+                  <div className="review-stat-chip negative">
+                    <span className="review-stat-icon">👎</span>
+                    <span className="review-stat-num">{reviewData.negative_total.toLocaleString("ru-RU")}</span>
+                    <span className="review-stat-label">отрицат.</span>
+                  </div>
+                </div>
+              )}
+
+              {reviewData.strengths.length > 0 && (
+                <div className="insights-section">
+                  <div className="insights-label success-label">✅ Достоинства</div>
+                  <div className="insights-chips">
+                    {reviewData.strengths.map((s, i) => (
+                      <span key={i} className="insight-chip positive">{s}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {reviewData.weaknesses.length > 0 && (
+                <div className="insights-section">
+                  <div className="insights-label error-label">❌ Недостатки</div>
+                  <div className="insights-chips">
+                    {reviewData.weaknesses.map((w, i) => (
+                      <span key={i} className="insight-chip negative">{w}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {reviewData.strengths.length === 0 && reviewData.weaknesses.length === 0 && (
+                <div className="feature-empty">Отзывов недостаточно для анализа</div>
+              )}
+            </>
+          )}
+
+          <button className="btn btn-secondary" style={{ width: "100%", marginTop: 12 }} onClick={goMain}>
+            ← Назад
+          </button>
+        </div>
+      )}
+
+      {/* === SIMILAR VIEW === */}
+      {view === "similar" && (
+        <div className="view-anim">
+          <div className="settings-header">
+            <span className="settings-title">
+              {similarMode === "cheap" ? "💸 Найти дешевле" : "🔄 Похожие"}
+            </span>
+            <button className="btn-close" onClick={goMain}>✕</button>
+          </div>
+          <div className="settings-title-text">{track.title}</div>
+
+          {/* Mode tabs */}
+          <div className="similar-mode-tabs">
+            <button
+              className={`mode-tab ${similarMode === "cheap" ? "active" : ""}`}
+              onClick={() => { if (similarMode !== "cheap") handleOpenSimilar("cheap"); }}
+              disabled={similarLoading}
+            >
+              💸 Дешевле
+            </button>
+            <button
+              className={`mode-tab ${similarMode === "similar" ? "active" : ""}`}
+              onClick={() => { if (similarMode !== "similar") handleOpenSimilar("similar"); }}
+              disabled={similarLoading}
+            >
+              🔄 Похожие
+            </button>
+          </div>
+
+          {similarLoading && (
+            <div className="feature-loading">
+              <div className="spinner-ring" />
+              <span>{similarMode === "cheap" ? "Ищем дешевле…" : "Ищем похожие…"}</span>
+              <span className="feature-loading-hint">Проверяем актуальные цены и наличие</span>
+            </div>
+          )}
+
+          {similarError && (
+            <div className="feature-error">⚠️ {similarError}</div>
+          )}
+
+          {similarData && !similarLoading && similarData.items.length === 0 && (
+            <div className="feature-empty">
+              {similarMode === "cheap" ? "Дешевле не нашлось" : "Похожих товаров не нашлось"}
+            </div>
+          )}
+
+          {similarData && !similarLoading && similarData.items.length > 0 && (
+            <>
+              {similarMode === "cheap" && similarData.base_price && (
+                <div className="similar-base-price">
+                  Текущая цена: <strong>{formatPrice(parseFloat(similarData.base_price))}</strong>
+                </div>
+              )}
+              <div className="similar-list">
+                {similarData.items.map((item, i) => (
+                  <a
+                    key={item.wb_item_id}
+                    href={item.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="similar-item"
+                  >
+                    <div className="similar-num">{i + 1}</div>
+                    <div className="similar-info">
+                      <div className="similar-title">
+                        {item.brand ? <strong>{item.brand} </strong> : null}{item.title}
+                      </div>
+                      <div className="similar-price">{formatPrice(parseFloat(item.price))}</div>
+                    </div>
+                    <div className="similar-arrow">›</div>
+                  </a>
+                ))}
+              </div>
+            </>
+          )}
+
+          <button className="btn btn-secondary" style={{ width: "100%", marginTop: 12 }} onClick={goMain}>
+            ← Назад
+          </button>
         </div>
       )}
     </div>

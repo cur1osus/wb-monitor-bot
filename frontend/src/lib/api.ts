@@ -1,4 +1,4 @@
-import type { DashboardData, TrackSettings } from "@/types";
+import type { DashboardData, ReviewInsights, SimilarResult, TrackSettings } from "@/types";
 
 function getInitData(): string {
   if (typeof window === "undefined") return "";
@@ -57,4 +57,29 @@ export async function patchTrackSettings(
   });
 
   if (!res.ok) throw new Error("Failed to update settings");
+}
+
+export async function fetchReviews(trackId: number): Promise<ReviewInsights> {
+  const res = await fetch(`/api/tracks/${trackId}/reviews`, {
+    headers: { "X-Telegram-Init-Data": getInitData() },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
+    throw new Error(err.detail || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchSimilar(
+  trackId: number,
+  mode: "cheap" | "similar"
+): Promise<SimilarResult> {
+  const res = await fetch(`/api/tracks/${trackId}/similar?mode=${mode}`, {
+    headers: { "X-Telegram-Init-Data": getInitData() },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
+    throw new Error(err.detail || `HTTP ${res.status}`);
+  }
+  return res.json();
 }

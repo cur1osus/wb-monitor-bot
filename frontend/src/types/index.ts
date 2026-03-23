@@ -40,3 +40,24 @@ export interface TrackSettings {
   watch_qty?: boolean;
   watch_sizes?: string[];
 }
+
+export interface ReviewInsights {
+  strengths: string[];
+  weaknesses: string[];
+  positive_total: number;
+  negative_total: number;
+}
+
+export interface SimilarItem {
+  wb_item_id: number;
+  title: string;
+  price: string;
+  url: string;
+  brand: string | null;
+}
+
+export interface SimilarResult {
+  mode: "cheap" | "similar";
+  base_price: string;
+  items: SimilarItem[];
+}

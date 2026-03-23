@@ -63,6 +63,7 @@ async def main() -> None:
     # Инициализация веб-сервера
     import bot.web.app as web_module
     web_module.db_pool = db_pool
+    web_module.redis_pool = redis
     
     config = uvicorn.Config(web_app, host="0.0.0.0", port=se.web_server_port, log_level="info")
     server = uvicorn.Server(config)
