@@ -133,3 +133,6 @@ DEPLOY_LLM.md
 
 # Ruff
 .ruff_cache
+
+# Frontend lib (override root lib/ ignore)
+!frontend/src/lib/
