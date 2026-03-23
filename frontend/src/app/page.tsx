@@ -75,6 +75,7 @@ export default function DashboardPage() {
   const { user, tracks } = data;
   const activeTracks = tracks.filter((t) => t.is_active);
   const inStockTracks = tracks.filter((t) => t.in_stock);
+  const isPro = user.plan === "pro" || user.plan === "pro_plus";
 
   const planLabel = user.plan === "pro" ? "PRO" : "Free";
   const userName = user.first_name || user.username || "Пользователь";
@@ -105,7 +106,7 @@ export default function DashboardPage() {
         <>
           <div className="section-label">Товары ({tracks.length})</div>
           {tracks.map((track) => (
-            <TrackCard key={track.id} track={track} onRefresh={load} />
+            <TrackCard key={track.id} track={track} isPro={isPro} onRefresh={load} />
           ))}
         </>
       )}
