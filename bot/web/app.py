@@ -69,7 +69,7 @@ def _wb_image_url(wb_item_id: int) -> str:
     basket_num = _vol_to_basket(vol)
     return (
         f"https://basket-{basket_num:02d}.wbbasket.ru"
-        f"/vol{vol}/part{part}/{wb_item_id}/images/c246x328/1.jpg"
+        f"/vol{vol}/part{part}/{wb_item_id}/images/c246x328/1.webp"
     )
 
 
