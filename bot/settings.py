@@ -42,6 +42,9 @@ class Settings:
         "https://litellm.tokengate.ru/v1",
     )
 
+    web_server_port: int = int(os.environ.get("WEB_SERVER_PORT", 8080))
+    web_app_url: str = os.environ.get("WEB_APP_URL", "")
+
     psql: PostgresSettings = PostgresSettings()
     redis: RedisSettings = RedisSettings()
 

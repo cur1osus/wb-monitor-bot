@@ -14,7 +14,7 @@ from __future__ import annotations
 from urllib.parse import quote, urlencode
 
 from aiogram.filters.callback_data import CallbackData
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 
 from bot.callbacks import (
     AdminAction,
@@ -54,6 +54,7 @@ from bot.services.config import (
     PRO_LIMIT,
     PRO_PLUS_LIMIT,
 )
+from bot.settings import se
 from bot import text as tx
 
 
@@ -119,6 +120,9 @@ def dashboard_kb(is_admin: bool, *, show_compare: bool = True) -> InlineKeyboard
             _btn(tx.BTN_SUPPORT, NavCb(action=NavAction.HELP)),
         ],
     ]
+    if se.web_app_url:
+        rows.append([InlineKeyboardButton(text=tx.BTN_WEB_DASHBOARD, web_app=WebAppInfo(url=se.web_app_url))])
+
     if show_compare:
         rows.insert(
             2, [_btn(tx.BTN_COMPARE, CompareActionCb(action=CompareAction.OPEN))]

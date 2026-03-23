@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime
@@ -16,6 +17,7 @@ from bot.enums import FeatureName, FeaturePeriod, PlanOfferCode, UserPlan
 from bot.db.redis import FeatureUsageDailyRD
 from bot.db.models import TrackModel
 from bot.keyboards.inline import paged_track_kb
+from bot.services.wb_client import extract_wb_item_id
 from bot import text as tx
 
 if TYPE_CHECKING:
@@ -133,6 +135,34 @@ def _track_limit(plan: UserPlan | str) -> int:
     if normalized == UserPlan.PRO:
         return 50
     return 5
+
+
+def extract_wb_ids_from_msg(msg: Message) -> list[int]:
+    """Extract all unique WB item IDs from message text, caption and entities."""
+    wb_ids: list[int] = []
+    sources: list[str] = []
+
+    if msg.text:
+        sources.append(msg.text)
+    if msg.caption:
+        sources.append(msg.caption)
+
+    # Add URLs from hyperlinks (text_link)
+    entities = msg.entities or msg.caption_entities or []
+    for entity in entities:
+        if entity.type == "text_link" and entity.url:
+            sources.append(entity.url)
+
+    for source in sources:
+        # Split source into parts to find multiple IDs in one text block
+        # (e.g. "link1 link2" or a list of links)
+        parts = re.split(r"[\n,;\t ]+", source)
+        for part in parts:
+            nm_id = extract_wb_item_id(part.strip())
+            if nm_id and nm_id not in wb_ids:
+                wb_ids.append(nm_id)
+
+    return wb_ids
 
 
 def _can_use_compare(*, plan: UserPlan | str, admin: bool) -> bool:

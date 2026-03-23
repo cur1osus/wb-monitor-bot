@@ -20,6 +20,8 @@ from bot.middlewares.throw_session import ThrowDBSessionMiddleware
 from bot.middlewares.throw_user import ThrowUserMiddleware
 from bot.services.worker import start_worker
 from bot.settings import se
+import uvicorn
+from bot.web.app import app as web_app
 
 logging.basicConfig(
     level=logging.INFO,
@@ -58,6 +60,14 @@ async def main() -> None:
     # Shared данные для хендлеров
     dp.workflow_data.update(db_pool=db_pool, redis=redis, se=se)
 
+    # Инициализация веб-сервера
+    import bot.web.app as web_module
+    web_module.db_pool = db_pool
+    
+    config = uvicorn.Config(web_app, host="0.0.0.0", port=se.web_server_port, log_level="info")
+    server = uvicorn.Server(config)
+    web_task = asyncio.create_task(server.serve())
+
     dp.include_router(handlers.router)
 
     await bot.set_my_commands([BotCommand(command="start", description="Главное меню")])
@@ -70,9 +80,10 @@ async def main() -> None:
         logger.info("Bot started")
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
     finally:
+        web_task.cancel()
         worker_task.cancel()
         try:
-            await worker_task
+            await asyncio.gather(web_task, worker_task, return_exceptions=True)
         except asyncio.CancelledError:
             pass
         await close_db(engine)

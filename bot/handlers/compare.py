@@ -42,6 +42,7 @@ from bot.handlers._shared import (
     SettingsState,
     _can_use_compare,
     _COMPARE_DAILY_LIMIT,
+    extract_wb_ids_from_msg,
 )
 
 router = Router()
@@ -102,24 +103,16 @@ async def wb_compare_mode_cb(
     )
 
 
-@router.message(SettingsState.waiting_for_compare_items, F.text)
+@router.message(SettingsState.waiting_for_compare_items, F.text | F.caption)
 async def wb_compare_from_text(
     msg: Message,
     session: AsyncSession,
     redis: "Redis",
     state: FSMContext,
 ) -> None:
-    raw_parts = [
-        p.strip() for p in re.split(r"[\n,;\t ]+", msg.text or "") if p.strip()
-    ]
-    wb_ids: list[int] = []
-    for part in raw_parts:
-        nm_id = extract_wb_item_id(part)
-        if not nm_id or nm_id in wb_ids:
-            continue
-        wb_ids.append(nm_id)
+    wb_ids = extract_wb_ids_from_msg(msg)
 
-    if len(wb_ids) > 5:
+    if len(wb_ids) > 20:
         await msg.answer(tx.COMPARE_ITEMS_TOO_MANY)
         return
     if len(wb_ids) < 2:
@@ -243,7 +236,7 @@ async def wb_compare_from_text(
     winner = by_id.get(result.winner_id) or products[0]
 
     ranking_lines: list[str] = []
-    for idx, nm_id in enumerate(result.ranking[:5], start=1):
+    for idx, nm_id in enumerate(result.ranking[:10], start=1):
         p = by_id.get(nm_id)
         s = score_by_id.get(nm_id)
         if not p:
