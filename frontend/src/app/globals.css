@@ -8,12 +8,12 @@
   --md-primary-light: #818cf8;
   --md-primary-dark:  #4338ca;
   --md-primary-rgb:   99, 102, 241;
-  --md-surface:       rgba(255, 255, 255, 0.72);
-  --md-surface-2:     rgba(255, 255, 255, 0.55);
+  --md-surface:       rgba(30, 27, 75, 0.72);
+  --md-surface-2:     rgba(30, 27, 75, 0.55);
   --md-surface-dark:  rgba(255, 255, 255, 0.10);
-  --md-outline:       rgba(99, 102, 241, 0.15);
-  --md-shadow:        0 2px 16px rgba(99, 102, 241, 0.08);
-  --md-shadow-lg:     0 8px 32px rgba(99, 102, 241, 0.14);
+  --md-outline:       rgba(129, 140, 248, 0.20);
+  --md-shadow:        0 2px 16px rgba(0, 0, 0, 0.25);
+  --md-shadow-lg:     0 8px 32px rgba(0, 0, 0, 0.35);
 
   /* Semantic colors */
   --success:   #22c55e;
@@ -23,13 +23,13 @@
   --warning:   #f59e0b;
 
   /* Telegram fallback → override with TG theme vars */
-  --bg:           var(--tg-theme-bg-color,            #f0f0ff);
-  --text:         var(--tg-theme-text-color,          #0f0f1a);
-  --hint:         var(--tg-theme-hint-color,          #6b7280);
-  --link:         var(--tg-theme-link-color,          #6366f1);
+  --bg:           var(--tg-theme-bg-color,            #0f0f1a);
+  --text:         var(--tg-theme-text-color,          #f0f0ff);
+  --hint:         var(--tg-theme-hint-color,          #9ca3af);
+  --link:         var(--tg-theme-link-color,          #818cf8);
   --btn:          var(--tg-theme-button-color,        #6366f1);
   --btn-text:     var(--tg-theme-button-text-color,   #ffffff);
-  --secondary-bg: var(--tg-theme-secondary-bg-color,  #eef2ff);
+  --secondary-bg: var(--tg-theme-secondary-bg-color,  #1e1b4b);
 
   /* Geometry */
   --radius-xs: 8px;
@@ -50,16 +50,6 @@
   --safe-bottom: env(safe-area-inset-bottom, 16px);
 }
 
-/* Dark mode override */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --md-surface:   rgba(30, 27, 75, 0.72);
-    --md-surface-2: rgba(30, 27, 75, 0.55);
-    --md-outline:   rgba(129, 140, 248, 0.20);
-    --md-shadow:    0 2px 16px rgba(0, 0, 0, 0.25);
-    --md-shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.35);
-  }
-}
 
 /* === RESET ===== */
 *, *::before, *::after {
@@ -237,14 +227,6 @@ a { color: var(--link); text-decoration: none; }
   overflow: hidden;
 }
 
-.stat-card::before {
-  content: "";
-  position: absolute;
-  top: 0; left: 0; right: 0;
-  height: 3px;
-  background: linear-gradient(90deg, var(--md-primary), var(--md-primary-light));
-  border-radius: var(--radius-md) var(--radius-md) 0 0;
-}
 
 .stat-icon { font-size: 20px; line-height: 1; }
 
@@ -302,21 +284,6 @@ a { color: var(--link); text-decoration: none; }
   opacity: 0.65;
 }
 
-/* Active indicator line on left edge */
-.track-card::after {
-  content: "";
-  position: absolute;
-  top: 16px; bottom: 16px; left: 0;
-  width: 3px;
-  border-radius: 0 3px 3px 0;
-  background: linear-gradient(180deg, var(--md-primary), var(--md-primary-light));
-  opacity: 0;
-  transition: opacity 0.2s;
-}
-
-.track-card:not(.paused)::after {
-  opacity: 1;
-}
 
 /* ===== PRODUCT IMAGE ===== */
 .track-header {
