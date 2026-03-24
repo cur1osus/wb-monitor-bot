@@ -22,14 +22,14 @@
   --error-bg:  rgba(239, 68, 68, 0.12);
   --warning:   #f59e0b;
 
-  /* Telegram fallback → override with TG theme vars */
-  --bg:           var(--tg-theme-bg-color,            #0f0f1a);
-  --text:         var(--tg-theme-text-color,          #f0f0ff);
-  --hint:         var(--tg-theme-hint-color,          #9ca3af);
-  --link:         var(--tg-theme-link-color,          #818cf8);
-  --btn:          var(--tg-theme-button-color,        #6366f1);
-  --btn-text:     var(--tg-theme-button-text-color,   #ffffff);
-  --secondary-bg: var(--tg-theme-secondary-bg-color,  #1e1b4b);
+  /* Fixed dark theme — ignore Telegram theme variables */
+  --bg:           #0f0f1a;
+  --text:         #f0f0ff;
+  --hint:         #9ca3af;
+  --link:         #818cf8;
+  --btn:          #6366f1;
+  --btn-text:     #ffffff;
+  --secondary-bg: #1e1b4b;
 
   /* Geometry */
   --radius-xs: 8px;
